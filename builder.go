@@ -9,6 +9,7 @@ import (
 	"github.com/AniruthKarthik/codemap/internal/models"
 	"github.com/AniruthKarthik/codemap/parser"
 	"github.com/AniruthKarthik/codemap/scanner"
+	"golang.org/x/sync/errgroup"
 )
 
 // RepositoryBuilder orchestrates the scanning and parsing of a repository.
@@ -72,42 +73,31 @@ func (b *RepositoryBuilder) Build(ctx context.Context, root string) (*models.Rep
 	}
 	close(pathChan)
 
-	fileChan := make(chan *models.File, len(paths))
-	errChan := make(chan error, b.workers)
-
-	var wg sync.WaitGroup
-	for i := 0; i < b.workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for path := range pathChan {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					file, err := b.parser.Parse(path)
-					if err != nil {
-						errChan <- fmt.Errorf("failed to parse %q: %w", path, err)
-						return
-					}
-					fileChan <- file
-				}
-			}
-		}()
-	}
-
-	wg.Wait()
-	close(fileChan)
-	close(errChan)
-
-	// Check if any error occurred during concurrent parsing
-	if err, ok := <-errChan; ok {
-		return nil, err
-	}
-
+	// We use a mutex to safely append to the results slice from multiple goroutines.
+	// Alternatively, we could use a channel, but a mutex is efficient for simple appends.
+	var mu sync.Mutex
 	files := make([]*models.File, 0, len(paths))
-	for file := range fileChan {
-		files = append(files, file)
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(b.workers)
+
+	for path := range pathChan {
+		path := path // capture range variable
+		g.Go(func() error {
+			file, err := b.parser.Parse(path)
+			if err != nil {
+				return fmt.Errorf("failed to parse %q: %w", path, err)
+			}
+
+			mu.Lock()
+			files = append(files, file)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	return &models.Repository{

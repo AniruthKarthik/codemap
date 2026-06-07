@@ -7,7 +7,6 @@ import (
 	"strings"
 )
 
-// Scanner defines the behavior for discovering Go source files.
 type Scanner interface {
 	Scan(root string) ([]string, error)
 }
@@ -47,8 +46,7 @@ func NewScanner(opts ...Option) *DefaultScanner {
 	return s
 }
 
-// Scan walks the filesystem starting from root, skipping excluded directories,
-// and returns a slice of paths to .go files.
+// Scan walks the filesystem starting from root, skipping excluded directories, and returns a slice of paths to .go files.
 func (s *DefaultScanner) Scan(root string) ([]string, error) {
 	var goFiles []string
 
