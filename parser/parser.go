@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -9,19 +10,25 @@ import (
 	"github.com/AniruthKarthik/codemap/internal/models"
 )
 
+// Parser defines the behavior for extracting metadata from a Go source file.
 type Parser interface {
 	Parse(path string) (*models.File, error)
 }
 
+// GoParser is an implementation of the Parser interface for Go source files.
 type GoParser struct{}
 
+// NewGoParser creates a new GoParser instance.
+func NewGoParser() *GoParser {
+	return &GoParser{}
+}
+
+// Parse extracts package information, imports, and function declarations from a Go file.
 func (p *GoParser) Parse(path string) (*models.File, error) {
 	fset := token.NewFileSet()
-	// Using parser.ParseComments to ensure we get as much info as needed, 
-	// though parser.AllErrors or 0 might suffice for just declarations.
 	f, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse file %q: %w", path, err)
 	}
 
 	imports := make([]string, 0, len(f.Imports))
@@ -35,7 +42,7 @@ func (p *GoParser) Parse(path string) (*models.File, error) {
 		if fn, ok := decl.(*ast.FuncDecl); ok {
 			start := fset.Position(fn.Pos()).Line
 			end := fset.Position(fn.End()).Line
-			
+
 			functions = append(functions, models.Function{
 				Name:      fn.Name.Name,
 				StartLine: start,
