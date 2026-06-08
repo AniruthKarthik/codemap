@@ -5,36 +5,79 @@ import type { Analysis, ChatMessage } from './types'
 import Prism from 'prismjs'
 import 'prismjs/components/prism-go'
 import ReactMarkdown from 'react-markdown'
-import mermaid from 'mermaid'
+import ReactFlow, { Background, Controls, BackgroundVariant, type Node, type Edge } from 'reactflow'
+import 'reactflow/dist/style.css'
+import dagre from 'dagre'
 
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'base',
-  themeVariables: {
-    fontFamily: 'var(--font-sans)',
-    primaryColor: '#ffffff',
-    primaryBorderColor: '#e0e0e0',
-    primaryTextColor: '#1d1d1f',
-    lineColor: '#0071e3',
-  }
-})
+function CallGraphViewer({ graph }: { graph: Record<string, string[]> }) {
+  const dagreGraph = new dagre.graphlib.Graph();
+  dagreGraph.setDefaultEdgeLabel(() => ({}));
+  dagreGraph.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 50 });
 
-function MermaidChart({ chart }: { chart: string }) {
-  const chartRef = useRef<HTMLDivElement>(null)
-  
-  useEffect(() => {
-    if (chartRef.current && chart) {
-      mermaid.render(`mermaid-${Math.random().toString(36).substring(2)}`, chart).then(res => {
-        if (chartRef.current) {
-          chartRef.current.innerHTML = res.svg
-        }
-      }).catch(err => {
-        console.error("Mermaid error:", err)
-      })
+  const initialNodes: Node[] = [];
+  const initialEdges: Edge[] = [];
+  const addedNodes = new Set<string>();
+
+  Object.entries(graph).forEach(([caller, targets]) => {
+    if (!addedNodes.has(caller)) {
+      addedNodes.add(caller);
+      initialNodes.push({ id: caller, position: { x: 0, y: 0 }, data: { label: caller } });
     }
-  }, [chart])
-  
-  return <div ref={chartRef} style={{ overflowX: 'auto', display: 'flex', justifyContent: 'center' }} />
+    targets.forEach((target) => {
+      if (!addedNodes.has(target)) {
+        addedNodes.add(target);
+        initialNodes.push({ id: target, position: { x: 0, y: 0 }, data: { label: target } });
+      }
+      initialEdges.push({
+        id: `${caller}-${target}`,
+        source: caller,
+        target: target,
+        animated: true,
+        style: { stroke: '#0071e3' },
+      });
+    });
+  });
+
+  initialNodes.forEach((node) => {
+    dagreGraph.setNode(node.id, { width: 180, height: 40 });
+  });
+
+  initialEdges.forEach((edge) => {
+    dagreGraph.setEdge(edge.source, edge.target);
+  });
+
+  dagre.layout(dagreGraph);
+
+  const layoutedNodes = initialNodes.map((node) => {
+    const nodeWithPosition = dagreGraph.node(node.id);
+    node.targetPosition = 'top' as any;
+    node.sourcePosition = 'bottom' as any;
+    node.position = {
+      x: nodeWithPosition.x - 90,
+      y: nodeWithPosition.y - 20,
+    };
+    node.style = { 
+      background: '#fff', 
+      border: '1px solid #e0e0e0', 
+      borderRadius: '8px', 
+      padding: '10px', 
+      fontSize: '13px', 
+      fontFamily: 'var(--font-sans)',
+      textAlign: 'center', 
+      minWidth: '180px',
+      boxShadow: 'var(--apple-shadow)'
+    };
+    return node;
+  });
+
+  return (
+    <div style={{ width: '100%', height: '100%' }}>
+      <ReactFlow nodes={layoutedNodes} edges={initialEdges} fitView attributionPosition="bottom-right">
+        <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
+        <Controls />
+      </ReactFlow>
+    </div>
+  );
 }
 
 const API_BASE = 'http://localhost:8080'
@@ -510,13 +553,8 @@ function App() {
     }
 
     return (
-      <div style={{ padding: '24px', height: '100%', overflow: 'auto', display: 'flex', justifyContent: 'center' }}>
-        <MermaidChart chart={[
-          "graph TD",
-          ...Object.entries(selectedStep.CallGraph).flatMap(([caller, targets]) => 
-            targets.map(t => `    ${caller.replace(/[^a-zA-Z0-9_]/g, '_')}["${caller}"] --> ${t.replace(/[^a-zA-Z0-9_]/g, '_')}["${t}"]`)
-          )
-        ].join('\n')} />
+      <div style={{ height: '100%', width: '100%' }}>
+        <CallGraphViewer graph={selectedStep.CallGraph} />
       </div>
     );
   };
