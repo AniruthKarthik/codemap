@@ -35,4 +35,5 @@ type LearningStep struct {
 	File   string
 	Reason string
 	Score  float64
+	Slice  FileSlice
 }

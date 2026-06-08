@@ -1227,11 +1227,73 @@ func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
 			}
 		}
 
+		// Extract important ranges for this file
+		fileSlice := models.FileSlice{
+			FilePath: f.Path,
+		}
+
+		// Sort symbols by start line to merge ranges
+		sort.Slice(f.Symbols, func(i, j int) bool {
+			return f.Symbols[i].StartLine < f.Symbols[j].StartLine
+		})
+
+		for _, sym := range f.Symbols {
+			// Refined importance logic
+			importanceLevel := 0 // 0: ignore, 1: signature only, 2: full
+			
+			if sym.Kind == models.StructSymbol || sym.Kind == models.InterfaceSymbol {
+				importanceLevel = 2 // Always show data structures fully
+			} else if sym.Kind == models.FunctionSymbol || sym.Kind == models.MethodSymbol {
+				if sym.Score > 300 || (f.Role == models.RoleEntrypoint && sym.Name == "main") {
+					importanceLevel = 2 // High impact functions and main()
+				} else if sym.Score > 50 || strings.HasPrefix(sym.Name, "New") {
+					importanceLevel = 1 // Central APIs and Constructors (signatures only)
+				}
+			}
+
+			if importanceLevel == 2 {
+				fileSlice.Ranges = append(fileSlice.Ranges, models.LineRange{
+					Start: sym.StartLine,
+					End:   sym.EndLine,
+				})
+			} else if importanceLevel == 1 {
+				// Show just the signature (first few lines to handle multi-line signatures)
+				end := sym.StartLine + 3
+				if end > sym.EndLine {
+					end = sym.EndLine
+				}
+				fileSlice.Ranges = append(fileSlice.Ranges, models.LineRange{
+					Start: sym.StartLine,
+					End:   end,
+				})
+			}
+		}
+
+		// Merge overlapping/adjacent ranges
+		if len(fileSlice.Ranges) > 0 {
+			merged := make([]models.LineRange, 0)
+			curr := fileSlice.Ranges[0]
+			for j := 1; j < len(fileSlice.Ranges); j++ {
+				next := fileSlice.Ranges[j]
+				if next.Start <= curr.End+1 {
+					if next.End > curr.End {
+						curr.End = next.End
+					}
+				} else {
+					merged = append(merged, curr)
+					curr = next
+				}
+			}
+			merged = append(merged, curr)
+			fileSlice.Ranges = merged
+		}
+
 		steps = append(steps, models.LearningStep{
 			Order:  i + 1,
 			File:   f.Path,
 			Reason: reason,
 			Score:  float64(f.Score),
+			Slice:  fileSlice,
 		})
 	}
 
