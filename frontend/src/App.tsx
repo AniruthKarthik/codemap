@@ -4,6 +4,7 @@ import './App.css'
 import type { Analysis, ChatMessage } from './types'
 import Prism from 'prismjs'
 import 'prismjs/components/prism-go'
+import ReactMarkdown from 'react-markdown'
 
 const API_BASE = 'http://localhost:8080'
 
@@ -631,7 +632,11 @@ function App() {
               )}
               {currentHistory.map((msg, i) => (
                 <div key={i} className={`chat-message ${msg.role}`}>
-                  {msg.content}
+                  {msg.role === 'assistant' ? (
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  ) : (
+                    msg.content
+                  )}
                 </div>
               ))}
               {sendingChat && (
