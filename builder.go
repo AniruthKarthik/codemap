@@ -262,6 +262,17 @@ func (b *RepositoryBuilder) Build(ctx context.Context, root string) (*models.Rep
 	detector := &ConceptDetector{}
 	repo.Concepts, repo.ConceptEdges = detector.Detect(repo)
 
+	// Populate Rankings
+	// 1. Architecture Ranking (Concepts are already sorted by Importance in Detect)
+	repo.Rankings.ArchitectureRanking = make([]string, len(repo.Concepts))
+	for i, c := range repo.Concepts {
+		repo.Rankings.ArchitectureRanking[i] = c.ID
+	}
+
+	// 2. Learning Ranking (Use Generator to calculate priorities and handle prerequisites)
+	generator := &Generator{}
+	generator.GenerateUnits(repo) // This populates repo.Rankings.LearningRanking
+
 	return repo, nil
 }
 
@@ -312,8 +323,8 @@ func (cd *ConceptDetector) Detect(repo *models.Repository) ([]models.Concept, []
 					count = len(c.SymbolIDs)
 				}
 
-				if count >= 30 {
-					subIndex := count / 30
+				if count >= 100 {
+					subIndex := count / 100
 					conceptName = fmt.Sprintf("%s (Part %d)", sym.Receiver, subIndex+1)
 					conceptID = fmt.Sprintf("%s.Part%d", conceptID, subIndex+1)
 				}
@@ -435,7 +446,24 @@ func (cd *ConceptDetector) Detect(repo *models.Repository) ([]models.Concept, []
 		symSet := make(map[string]bool)
 		for _, id := range c.SymbolIDs {
 			symSet[id] = true
+			
+			// Aggregate symbol factors
+			if sym, ok := idToSymbol[id]; ok {
+				c.Factors.Centrality += sym.Factors.Centrality
+				c.Factors.Reachability += sym.Factors.Reachability
+				
+				// Bonus for exported, non-test symbols
+				if len(sym.Name) > 0 && sym.Name[0] >= 'A' && sym.Name[0] <= 'Z' && !strings.HasPrefix(sym.Name, "Test") {
+					c.Factors.PublicAPIWeight += 100
+				}
+			}
 		}
+
+		// Normalize API weight: core APIs usually have a focused set of important methods
+		if c.Factors.PublicAPIWeight > 2000 {
+			c.Factors.PublicAPIWeight = 2000 + (c.Factors.PublicAPIWeight-2000)*0.1
+		}
+
 		for _, fromID := range c.SymbolIDs {
 			for toID := range neighbors[fromID] {
 				if symSet[toID] {
@@ -449,6 +477,7 @@ func (cd *ConceptDetector) Detect(repo *models.Repository) ([]models.Concept, []
 		} else {
 			c.Cohesion = 1.0
 		}
+		c.Factors.ConceptSize = float64(n)
 
 		// Role Classification
 		c.Role = models.RoleSupporting
@@ -460,6 +489,24 @@ func (cd *ConceptDetector) Detect(repo *models.Repository) ([]models.Concept, []
 			c.Role = models.RolePeripheral
 		}
 
+		// Concept Naming (Use the most important symbol's name)
+		bestSymName := ""
+		bestSymScore := -1.0
+		for _, id := range c.SymbolIDs {
+			if sym, ok := idToSymbol[id]; ok {
+				if sym.Score > bestSymScore {
+					bestSymScore = sym.Score
+					bestSymName = sym.Name
+				}
+			}
+		}
+		if bestSymName != "" && (c.Name == "" || strings.HasSuffix(c.Name, ".go") || strings.HasSuffix(c.Name, " Logic")) {
+			if c.Role == models.RoleFoundational {
+				c.Name = bestSymName
+			} else {
+				c.Name = bestSymName + " Module"
+			}
+		}
 		// Summary Generation (Heuristic)
 		c.Summary = models.ConceptSummary{
 			Purpose:  fmt.Sprintf("Handles %s functionality.", c.Name),
@@ -472,14 +519,48 @@ func (cd *ConceptDetector) Detect(repo *models.Repository) ([]models.Concept, []
 		concepts = append(concepts, *c)
 	}
 
-	// Final pass to populate Unlocks for summaries
-	unlocksMap := make(map[string][]string)
+	// Final pass to populate Unlocks/UsedBy for summaries and ImportanceFactors
+	unlocksMap := make(map[string][]string) // ToID -> FromIDs (who depends on me)
+	usedByMap := make(map[string][]string)  // FromID -> ToIDs (who I depend on)
 	for _, edge := range conceptEdges {
-		unlocksMap[edge.To] = append(unlocksMap[edge.To], edge.From)
+		unlocksMap[edge.To] = append(unlocksMap[edge.To], conceptsMap[edge.From].Name)
+		usedByMap[edge.From] = append(usedByMap[edge.From], conceptsMap[edge.To].Name)
 	}
+
 	for i := range concepts {
 		c := &concepts[i]
 		c.Summary.Unlocks = unlocksMap[c.ID]
+		c.Factors.DependencyUnlocks = float64(len(unlocksMap[c.ID]))
+		
+		hasMethods := false
+		for _, symID := range c.SymbolIDs {
+			if sym, ok := idToSymbol[symID]; ok {
+				if sym.Kind == models.MethodSymbol || sym.Kind == models.FunctionSymbol {
+					hasMethods = true
+					break
+				}
+			}
+		}
+
+		// Mental Model Detection (Heuristics)
+		c.Type = models.SupportingType
+		
+		// Core Abstraction: Exported Struct with many methods and high centrality
+		// Main API: Entry points and high-unlock concepts
+		if hasMethods && c.Factors.PublicAPIWeight > 500 && c.Factors.Centrality > 200 {
+			c.Type = models.CoreAbstraction
+		} else if hasMethods && c.Factors.ConceptSize > 5 && c.Factors.PublicAPIWeight > 300 {
+			c.Type = models.CoreAbstraction
+		} else if hasMethods && c.Factors.DependencyUnlocks > 10 {
+			c.Type = models.EntryAPI
+		} else if c.Importance < 100 || !hasMethods {
+			c.Type = models.UtilityType
+		}
+
+		// Semantic Explanation refinement
+		if len(usedByMap[c.ID]) > 0 {
+			c.Summary.WhyLearn += fmt.Sprintf(" Used by %s.", strings.Join(usedByMap[c.ID], ", "))
+		}
 	}
 
 	sort.Slice(concepts, func(i, j int) bool {
@@ -667,11 +748,11 @@ func (r *Ranker) Rank(repo *models.Repository) {
 			// Base score by kind
 			switch sym.Kind {
 			case models.StructSymbol:
-				sym.Score = 50
+				sym.Score = 500 // Huge base score
 			case models.InterfaceSymbol:
-				sym.Score = 60
+				sym.Score = 600
 			case models.FunctionSymbol, models.MethodSymbol:
-				sym.Score = 20
+				sym.Score = 50
 			}
 
 			// Bonus for exported symbols
@@ -719,6 +800,7 @@ func (r *Ranker) Rank(repo *models.Repository) {
 			default:
 				weight = 10
 			}
+			target.Factors.Centrality += weight
 			target.Score += weight
 		}
 	}
@@ -759,6 +841,7 @@ func (r *Ranker) Rank(repo *models.Repository) {
 				// Apply reachability bonus
 				if target, ok := idToSymbol[neighbor]; ok {
 					bonus := 100.0 / float64(dist+1)
+					target.Factors.Reachability += bonus
 					target.Score += bonus
 				}
 			}
@@ -857,20 +940,36 @@ func (g *Generator) GenerateUnits(repo *models.Repository) []models.LearningUnit
 		c := &repo.Concepts[i]
 		conceptMap[c.ID] = c
 
+		// LearningRanking (Human Bias)
 		priority := c.Importance
-		switch c.Role {
-		case models.RoleFoundational:
-			priority += 2000
-		case models.RoleCore:
-			priority += 1000
-		case models.RolePeripheral:
+		
+		switch c.Type {
+		case models.CoreAbstraction:
+			priority += 500 // Mental Model Root Boost
+		case models.EntryAPI:
+			priority += 300
+		case models.SupportingType:
+			priority -= 300
+		case models.UtilityType:
 			priority -= 500
 		}
-		priority += float64(unlockCount[c.ID]) * 50
-		
-		// Penalty for being deep in the dependency graph
-		priority -= float64(len(c.PrerequisiteIDs)) * 100
 
+		// Weight Public API significantly (Evidence of intended learning targets)
+		priority += c.Factors.PublicAPIWeight * 0.5
+
+		switch c.Role {
+		case models.RoleFoundational:
+			priority += 200
+		case models.RoleCore:
+			priority += 100
+		case models.RolePeripheral:
+			priority -= 100
+		}
+
+		// Penalty for being deep in the dependency graph (Internal complexity)
+		priority -= float64(len(c.PrerequisiteIDs)) * 50
+
+		c.LearningPriority = priority
 		priorities[c.ID] = priority
 	}
 
@@ -899,11 +998,14 @@ func (g *Generator) GenerateUnits(repo *models.Repository) []models.LearningUnit
 		}
 		inProgress[id] = true
 		c := conceptMap[id]
-		// Only strictly required foundational prerequisites
+		// Only strictly required prerequisites that are ALSO core/foundational
+		// AND not just utility types that happen to be dependencies.
 		for _, preID := range c.PrerequisiteIDs {
 			pre := conceptMap[preID]
 			if pre != nil && (pre.Role == models.RoleFoundational || pre.Role == models.RoleCore) {
-				visit(preID)
+				if pre.Type != models.UtilityType && pre.Type != models.SupportingType {
+					visit(preID)
+				}
 			}
 		}
 		visited[id] = true
@@ -914,6 +1016,9 @@ func (g *Generator) GenerateUnits(repo *models.Repository) []models.LearningUnit
 	for _, cp := range sortedPriorities {
 		visit(cp.id)
 	}
+
+	// Populate Learning Ranking in Repo
+	repo.Rankings.LearningRanking = orderedIDs
 
 	// 4. Build Units and Calculate Coverage
 	units := make([]models.LearningUnit, 0, len(orderedIDs))
@@ -1002,15 +1107,27 @@ func (g *Generator) extractSlice(repo *models.Repository, concept *models.Concep
 	totalHidden := 0
 	for path, syms := range fileToSyms {
 		fileSlice := models.FileSlice{
-			FilePath: path,
-			Ranges:   make([]models.LineRange, 0),
+			FilePath:   path,
+			Ranges:     make([]models.LineRange, 0),
+			Highlights: make([]models.Highlight, 0),
 		}
 
-		// 2. Collect ranges
+		// 2. Collect ranges and highlights
 		for _, sym := range syms {
 			fileSlice.Ranges = append(fileSlice.Ranges, models.LineRange{
 				Start: sym.StartLine,
 				End:   sym.EndLine,
+			})
+
+			// Highlight the declaration (first 5 lines or until end)
+			hEnd := sym.StartLine + 4
+			if hEnd > sym.EndLine {
+				hEnd = sym.EndLine
+			}
+			fileSlice.Highlights = append(fileSlice.Highlights, models.Highlight{
+				Start:  sym.StartLine,
+				End:    hEnd,
+				Reason: fmt.Sprintf("Definition of %s %s", sym.Kind, sym.Name),
 			})
 		}
 

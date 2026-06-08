@@ -6,10 +6,18 @@ type LineRange struct {
 	End   int
 }
 
+// Highlight represents a specific range of lines to be emphasized.
+type Highlight struct {
+	Start  int
+	End    int
+	Reason string
+}
+
 // FileSlice represents the parts of a single file that are relevant to a concept.
 type FileSlice struct {
-	FilePath string
-	Ranges   []LineRange
+	FilePath   string
+	Ranges     []LineRange
+	Highlights []Highlight
 }
 
 // CodeSlice represents the minimal set of code needed to understand a concept.

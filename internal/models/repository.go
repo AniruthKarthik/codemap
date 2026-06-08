@@ -10,4 +10,6 @@ type Repository struct {
 	Concepts []Concept
 	// ConceptEdges represents dependencies between concepts.
 	ConceptEdges []ConceptEdge
+	// Rankings contains the prioritized lists of concepts.
+	Rankings Rankings
 }

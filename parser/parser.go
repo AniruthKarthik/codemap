@@ -146,6 +146,11 @@ func (p *GoParser) extractReferences(f *ast.File, sym *models.Symbol) []models.R
 				if sym.Kind == models.FunctionSymbol || sym.Kind == models.MethodSymbol {
 					isConstructor := strings.HasPrefix(sym.Name, "New")
 
+					// Receiver (for methods)
+					if d.Recv != nil && len(d.Recv.List) > 0 {
+						p.collectTypeRefs(d.Recv.List[0].Type, models.RefField, addRef)
+					}
+
 					// Parameters
 					if d.Type.Params != nil {
 						for _, field := range d.Type.Params.List {

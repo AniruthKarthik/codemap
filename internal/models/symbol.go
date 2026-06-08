@@ -52,6 +52,9 @@ type Symbol struct {
 
 	// Score is the calculated importance of the symbol.
 	Score float64
+
+	// Factors details the components of the symbol's score.
+	Factors ImportanceFactors
 }
 
 // SymbolEdge represents a reference from one symbol to another.
