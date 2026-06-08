@@ -7,13 +7,9 @@ import 'prismjs/components/prism-go'
 import ReactMarkdown from 'react-markdown'
 import ReactFlow, { Background, Controls, BackgroundVariant, type Node, type Edge } from 'reactflow'
 import 'reactflow/dist/style.css'
-import dagre from 'dagre'
+import * as d3 from 'd3-force'
 
 function CallGraphViewer({ graph }: { graph: Record<string, string[]> }) {
-  const dagreGraph = new dagre.graphlib.Graph();
-  dagreGraph.setDefaultEdgeLabel(() => ({}));
-  dagreGraph.setGraph({ rankdir: 'TB', nodesep: 50, ranksep: 50 });
-
   const initialNodes: Node[] = [];
   const initialEdges: Edge[] = [];
   const addedNodes = new Set<string>();
@@ -38,36 +34,36 @@ function CallGraphViewer({ graph }: { graph: Record<string, string[]> }) {
     });
   });
 
-  initialNodes.forEach((node) => {
-    dagreGraph.setNode(node.id, { width: 180, height: 40 });
-  });
+  const simNodes = initialNodes.map(n => ({ ...n, x: 0, y: 0 }));
+  const simLinks = initialEdges.map(e => ({ source: e.source, target: e.target }));
 
-  initialEdges.forEach((edge) => {
-    dagreGraph.setEdge(edge.source, edge.target);
-  });
+  d3.forceSimulation(simNodes as any)
+    .force("charge", d3.forceManyBody().strength(-2500))
+    .force("link", d3.forceLink(simLinks).id((d: any) => d.id).distance(150))
+    .force("center", d3.forceCenter(0, 0))
+    .force("collide", d3.forceCollide().radius(80))
+    .stop()
+    .tick(300);
 
-  dagre.layout(dagreGraph);
-
-  const layoutedNodes = initialNodes.map((node) => {
-    const nodeWithPosition = dagreGraph.node(node.id);
-    node.targetPosition = 'top' as any;
-    node.sourcePosition = 'bottom' as any;
-    node.position = {
-      x: nodeWithPosition.x - 90,
-      y: nodeWithPosition.y - 20,
-    };
-    node.style = { 
-      background: '#fff', 
-      border: '1px solid #e0e0e0', 
-      borderRadius: '8px', 
-      padding: '10px', 
-      fontSize: '13px', 
-      fontFamily: 'var(--font-sans)',
-      textAlign: 'center', 
-      minWidth: '180px',
-      boxShadow: 'var(--apple-shadow)'
-    };
-    return node;
+  const layoutedNodes = simNodes.map((n) => {
+    return {
+      id: n.id,
+      data: n.data,
+      position: { x: n.x - 75, y: n.y - 20 },
+      targetPosition: 'top' as any,
+      sourcePosition: 'bottom' as any,
+      style: { 
+        background: '#fff', 
+        border: '1px solid #e0e0e0', 
+        borderRadius: '8px', 
+        padding: '10px', 
+        fontSize: '13px', 
+        fontFamily: 'var(--font-sans)',
+        textAlign: 'center', 
+        width: '150px',
+        boxShadow: 'var(--apple-shadow)'
+      }
+    } as Node;
   });
 
   return (
