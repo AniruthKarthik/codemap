@@ -8,4 +8,6 @@ type Repository struct {
 	SymbolEdges []SymbolEdge
 	// Concepts represents logical clusters of symbols.
 	Concepts []Concept
+	// ConceptEdges represents dependencies between concepts.
+	ConceptEdges []ConceptEdge
 }

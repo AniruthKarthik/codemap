@@ -260,7 +260,7 @@ func (b *RepositoryBuilder) Build(ctx context.Context, root string) (*models.Rep
 	ranker.Rank(repo)
 
 	detector := &ConceptDetector{}
-	repo.Concepts = detector.Detect(repo)
+	repo.Concepts, repo.ConceptEdges = detector.Detect(repo)
 
 	return repo, nil
 }
@@ -269,39 +269,194 @@ func (b *RepositoryBuilder) Build(ctx context.Context, root string) (*models.Rep
 type ConceptDetector struct{}
 
 // Detect analyzes the repository and groups symbols into Concepts.
-func (cd *ConceptDetector) Detect(repo *models.Repository) []models.Concept {
-	conceptsMap := make(map[string]*models.Concept)
+func (cd *ConceptDetector) Detect(repo *models.Repository) ([]models.Concept, []models.ConceptEdge) {
+	if len(repo.Files) == 0 {
+		return nil, nil
+	}
 
-	// Heuristic 1: Group methods with their receiver structs/interfaces
+	// 1. Gather all symbols and their neighborhood
+	idToSymbol := make(map[string]*models.Symbol)
+	neighbors := make(map[string]map[string]bool)
+
 	for _, f := range repo.Files {
-		for _, sym := range f.Symbols {
-			if sym.Kind == models.MethodSymbol && sym.Receiver != "" {
-				conceptName := sym.Receiver + " Lifecycle"
-				if _, ok := conceptsMap[conceptName]; !ok {
-					conceptsMap[conceptName] = &models.Concept{
-						Name: conceptName,
-					}
-				}
-				conceptsMap[conceptName].SymbolIDs = append(conceptsMap[conceptName].SymbolIDs, sym.ID)
-				conceptsMap[conceptName].Score += sym.Score
+		for i := range f.Symbols {
+			sym := &f.Symbols[i]
+			idToSymbol[sym.ID] = sym
+			if neighbors[sym.ID] == nil {
+				neighbors[sym.ID] = make(map[string]bool)
 			}
 		}
 	}
 
-	// Heuristic 2: Group symbols by common prefix (for non-methods)
-	// (To be implemented or refined)
+	for _, edge := range repo.SymbolEdges {
+		if neighbors[edge.From] != nil {
+			neighbors[edge.From][edge.To] = true
+		}
+		if neighbors[edge.To] != nil {
+			neighbors[edge.To][edge.From] = true
+		}
+	}
+
+	// 2. Initial Clustering by Receiver (Strong Signal)
+	conceptsMap := make(map[string]*models.Concept)
+	symbolToConceptID := make(map[string]string)
+
+	for _, f := range repo.Files {
+		for _, sym := range f.Symbols {
+			if sym.Kind == models.MethodSymbol && sym.Receiver != "" {
+				conceptName := sym.Receiver
+				conceptID := sym.Package + "." + sym.Receiver
+				
+				count := 0
+				if c, ok := conceptsMap[conceptID]; ok {
+					count = len(c.SymbolIDs)
+				}
+
+				if count >= 30 {
+					subIndex := count / 30
+					conceptName = fmt.Sprintf("%s (Part %d)", sym.Receiver, subIndex+1)
+					conceptID = fmt.Sprintf("%s.Part%d", conceptID, subIndex+1)
+				}
+
+				if _, ok := conceptsMap[conceptID]; !ok {
+					conceptsMap[conceptID] = &models.Concept{ID: conceptID, Name: conceptName}
+				}
+
+				conceptsMap[conceptID].SymbolIDs = append(conceptsMap[conceptID].SymbolIDs, sym.ID)
+				
+				importance := sym.Score
+				switch f.Role {
+				case models.RoleTest:
+					importance *= 0.1
+				case models.RoleExample, models.RoleGenerated:
+					importance *= 0.3
+				case models.RoleInfrastructure:
+					importance *= 0.5
+				}
+				conceptsMap[conceptID].Importance += importance
+				symbolToConceptID[sym.ID] = conceptID
+			}
+		}
+	}
+
+	// 3. Group remaining symbols by neighborhood similarity
+	for _, f := range repo.Files {
+		for _, sym := range f.Symbols {
+			if _, ok := symbolToConceptID[sym.ID]; ok {
+				continue
+			}
+
+			bestConceptID := ""
+			bestScore := 0.0
+
+			for id, concept := range conceptsMap {
+				matchCount := 0
+				for _, conceptSymID := range concept.SymbolIDs {
+					if neighbors[sym.ID][conceptSymID] {
+						matchCount++
+					}
+				}
+				
+				score := float64(matchCount) / float64(len(concept.SymbolIDs)+1)
+				if score > bestScore {
+					bestScore = score
+					bestConceptID = id
+				}
+			}
+
+			importance := sym.Score
+			switch f.Role {
+			case models.RoleTest:
+				importance *= 0.1
+			case models.RoleExample, models.RoleGenerated:
+				importance *= 0.3
+			case models.RoleInfrastructure:
+				importance *= 0.5
+			}
+
+			if bestScore > 0.1 && len(conceptsMap[bestConceptID].SymbolIDs) < 30 {
+				conceptsMap[bestConceptID].SymbolIDs = append(conceptsMap[bestConceptID].SymbolIDs, sym.ID)
+				conceptsMap[bestConceptID].Importance += importance
+				symbolToConceptID[sym.ID] = bestConceptID
+			} else {
+				conceptName := filepath.Base(f.Path)
+				conceptID := f.Path
+				if _, ok := conceptsMap[conceptID]; !ok {
+					conceptsMap[conceptID] = &models.Concept{ID: conceptID, Name: conceptName}
+				}
+				conceptsMap[conceptID].SymbolIDs = append(conceptsMap[conceptID].SymbolIDs, sym.ID)
+				conceptsMap[conceptID].Importance += importance
+				symbolToConceptID[sym.ID] = conceptID
+			}
+		}
+	}
+
+	// 4. Build Concept Dependencies and Calculate Cohesion
+	conceptEdgesMap := make(map[string]bool)
+	var conceptEdges []models.ConceptEdge
+
+	for _, edge := range repo.SymbolEdges {
+		fromConceptID := symbolToConceptID[edge.From]
+		toConceptID := symbolToConceptID[edge.To]
+
+		if fromConceptID != "" && toConceptID != "" && fromConceptID != toConceptID {
+			edgeKey := fromConceptID + "->" + toConceptID
+			if !conceptEdgesMap[edgeKey] {
+				conceptEdges = append(conceptEdges, models.ConceptEdge{
+					From: fromConceptID,
+					To:   toConceptID,
+				})
+				conceptEdgesMap[edgeKey] = true
+				
+				// dependency: from uses to, so to is prerequisite for from
+				conceptsMap[fromConceptID].PrerequisiteIDs = append(conceptsMap[fromConceptID].PrerequisiteIDs, toConceptID)
+			}
+		}
+	}
 
 	var concepts []models.Concept
 	for _, c := range conceptsMap {
+		if len(c.SymbolIDs) == 0 {
+			continue
+		}
+
+		preSet := make(map[string]bool)
+		var cleanPres []string
+		for _, preID := range c.PrerequisiteIDs {
+			if !preSet[preID] {
+				cleanPres = append(cleanPres, preID)
+				preSet[preID] = true
+			}
+		}
+		c.PrerequisiteIDs = cleanPres
+
+		internalEdges := 0
+		symSet := make(map[string]bool)
+		for _, id := range c.SymbolIDs {
+			symSet[id] = true
+		}
+		for _, fromID := range c.SymbolIDs {
+			for toID := range neighbors[fromID] {
+				if symSet[toID] {
+					internalEdges++
+				}
+			}
+		}
+		n := len(c.SymbolIDs)
+		if n > 1 {
+			c.Cohesion = float64(internalEdges) / float64(n*(n-1))
+		} else {
+			c.Cohesion = 1.0
+		}
+
 		concepts = append(concepts, *c)
 	}
 
-	// Sort concepts by score
 	sort.Slice(concepts, func(i, j int) bool {
-		return concepts[i].Score > concepts[j].Score
+		return concepts[i].Importance > concepts[j].Importance
 	})
 
-	return concepts
+	return concepts, conceptEdges
 }
 
 // Classifier determines the role of a file in the project structure.
@@ -651,10 +806,122 @@ func (r *Ranker) Rank(repo *models.Repository) {
 	})
 }
 
-// Generator creates a sequential learning path for exploring a repository.
+// Generator creates structured learning paths from analyzed repository data.
 type Generator struct{}
 
-// Generate produces a list of LearningSteps based on file rankings and entrypoints.
+// GenerateUnits produces a sequence of LearningUnits based on detected concepts and dependencies.
+func (g *Generator) GenerateUnits(repo *models.Repository) []models.LearningUnit {
+	if len(repo.Concepts) == 0 {
+		return nil
+	}
+
+	// 1. Map concepts for easy lookup
+	conceptMap := make(map[string]models.Concept)
+	for _, c := range repo.Concepts {
+		conceptMap[c.ID] = c
+	}
+
+	// 2. Topological Sort (Kahn's Algorithm variant)
+	// We want to order units such that prerequisites come first.
+	var orderedIDs []string
+	visited := make(map[string]bool)
+	temp := make(map[string]bool)
+
+	var visit func(id string)
+	visit = func(id string) {
+		if temp[id] {
+			// Cycle detected or already in progress - skip for now
+			return
+		}
+		if !visited[id] {
+			temp[id] = true
+			c := conceptMap[id]
+			for _, preID := range c.PrerequisiteIDs {
+				if _, exists := conceptMap[preID]; exists {
+					visit(preID)
+				}
+			}
+			visited[id] = true
+			temp[id] = false
+			orderedIDs = append(orderedIDs, id)
+		}
+	}
+
+	// Start with highest importance concepts but respect their prerequisites
+	for _, c := range repo.Concepts {
+		visit(c.ID)
+	}
+
+	// 3. Build Units and Calculate Coverage
+	units := make([]models.LearningUnit, 0, len(orderedIDs))
+	totalSymbols := 0
+	for _, f := range repo.Files {
+		totalSymbols += len(f.Symbols)
+	}
+
+	coveredSymbols := make(map[string]bool)
+	coveredConcepts := make(map[string]bool)
+
+	totalImportance := 0.0
+	for _, c := range repo.Concepts {
+		totalImportance += c.Importance
+	}
+
+	for i, id := range orderedIDs {
+		c := conceptMap[id]
+		
+		time := len(c.SymbolIDs) * 2
+		if time < 5 { time = 5 }
+		if time > 20 { time = 20 }
+
+		gain := 0.0
+		if totalImportance > 0 {
+			gain = (c.Importance / totalImportance) * 100
+		}
+
+		for _, symID := range c.SymbolIDs {
+			coveredSymbols[symID] = true
+		}
+		coveredConcepts[id] = true
+
+		coverage := models.Coverage{
+			SymbolsCovered:  len(coveredSymbols),
+			TotalSymbols:    totalSymbols,
+			ConceptsCovered: len(coveredConcepts),
+			TotalConcepts:   len(repo.Concepts),
+		}
+		if totalSymbols > 0 {
+			coverage.SymbolPercentage = (float64(coverage.SymbolsCovered) / float64(totalSymbols)) * 100
+		}
+		if len(repo.Concepts) > 0 {
+			coverage.ConceptPercentage = (float64(coverage.ConceptsCovered) / float64(len(repo.Concepts))) * 100
+		}
+
+		reason := "Core architectural component"
+		if c.Importance > 1000 {
+			reason = "Foundational system element"
+		} else if strings.Contains(strings.ToLower(c.Name), "test") {
+			reason = "Verification and usage examples"
+		}
+
+		units = append(units, models.LearningUnit{
+			Order:                   i + 1,
+			ID:                      c.ID,
+			Name:                    c.Name,
+			SymbolIDs:               c.SymbolIDs,
+			PrerequisiteIDs:         c.PrerequisiteIDs,
+			Reason:                  reason,
+			EstimatedTimeMinutes:    time,
+			KnowledgeGainPercentage: gain,
+			Coverage:                coverage,
+			Importance:              c.Importance,
+		})
+	}
+
+	return units
+}
+
+// Generate produces a list of LearningSteps (Legacy file-based path).
 func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
 	steps := make([]models.LearningStep, 0, len(repo.Files))
 
