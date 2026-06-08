@@ -113,11 +113,12 @@ func (p *GoParser) Parse(path string) (*models.File, error) {
 	}
 
 	return &models.File{
-		Path:      path,
-		Package:   "package " + pkgName,
-		Imports:   imports,
-		Functions: functions,
-		Symbols:   symbols,
+		Path:       path,
+		Package:    "package " + pkgName,
+		Imports:    imports,
+		Functions:  functions,
+		Symbols:    symbols,
+		TotalLines: fset.File(f.Package).LineCount(),
 	}, nil
 }
 

@@ -1,9 +1,29 @@
 package models
 
+type ConceptRole string
+
+const (
+	RoleFoundational ConceptRole = "foundational"
+	RoleCore         ConceptRole = "core"
+	RoleSupporting   ConceptRole = "supporting"
+	RolePeripheral   ConceptRole = "peripheral"
+)
+
+// ConceptSummary provides a human-readable explanation of why a concept matters.
+type ConceptSummary struct {
+	Purpose  string
+	WhyLearn string
+	Unlocks  []string
+}
+
 // Concept represents a logical cluster of symbols that form a high-level feature or flow.
 type Concept struct {
 	ID   string
 	Name string
+
+	Role ConceptRole
+
+	Summary ConceptSummary
 
 	// SymbolIDs is a list of symbol identifiers belonging to this concept.
 	SymbolIDs []string

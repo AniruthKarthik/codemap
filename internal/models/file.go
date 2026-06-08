@@ -29,6 +29,8 @@ type File struct {
 	Blocks []CodeBlock
 	// Symbols is a list of architectural symbols defined in the file.
 	Symbols []Symbol
+	// TotalLines is the total number of lines in the file.
+	TotalLines int
 	// Score is a calculated metric for the file's importance or complexity.
 	Score int64
 }

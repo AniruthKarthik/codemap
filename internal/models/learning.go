@@ -23,6 +23,9 @@ type LearningUnit struct {
 	// Coverage is the system understanding state after this unit.
 	Coverage Coverage
 
+	// Slice is the specific code extraction for this unit.
+	Slice CodeSlice
+
 	Importance float64
 }
 

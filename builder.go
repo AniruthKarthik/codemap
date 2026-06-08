@@ -430,6 +430,7 @@ func (cd *ConceptDetector) Detect(repo *models.Repository) ([]models.Concept, []
 		}
 		c.PrerequisiteIDs = cleanPres
 
+		// Cohesion calculation
 		internalEdges := 0
 		symSet := make(map[string]bool)
 		for _, id := range c.SymbolIDs {
@@ -449,7 +450,36 @@ func (cd *ConceptDetector) Detect(repo *models.Repository) ([]models.Concept, []
 			c.Cohesion = 1.0
 		}
 
+		// Role Classification
+		c.Role = models.RoleSupporting
+		if c.Importance > 1000 {
+			c.Role = models.RoleFoundational
+		} else if c.Importance > 300 {
+			c.Role = models.RoleCore
+		} else if strings.Contains(strings.ToLower(c.Name), "test") || strings.Contains(strings.ToLower(c.Name), "mock") {
+			c.Role = models.RolePeripheral
+		}
+
+		// Summary Generation (Heuristic)
+		c.Summary = models.ConceptSummary{
+			Purpose:  fmt.Sprintf("Handles %s functionality.", c.Name),
+			WhyLearn: "Key part of the system's architecture.",
+		}
+		if c.Role == models.RoleFoundational {
+			c.Summary.WhyLearn = "This is a foundational element that many other features build upon."
+		}
+
 		concepts = append(concepts, *c)
+	}
+
+	// Final pass to populate Unlocks for summaries
+	unlocksMap := make(map[string][]string)
+	for _, edge := range conceptEdges {
+		unlocksMap[edge.To] = append(unlocksMap[edge.To], edge.From)
+	}
+	for i := range concepts {
+		c := &concepts[i]
+		c.Summary.Unlocks = unlocksMap[c.ID]
 	}
 
 	sort.Slice(concepts, func(i, j int) bool {
@@ -809,50 +839,83 @@ func (r *Ranker) Rank(repo *models.Repository) {
 // Generator creates structured learning paths from analyzed repository data.
 type Generator struct{}
 
-// GenerateUnits produces a sequence of LearningUnits based on detected concepts and dependencies.
+// GenerateUnits produces a sequence of LearningUnits based on priority and dependencies.
 func (g *Generator) GenerateUnits(repo *models.Repository) []models.LearningUnit {
 	if len(repo.Concepts) == 0 {
 		return nil
 	}
 
-	// 1. Map concepts for easy lookup
-	conceptMap := make(map[string]models.Concept)
-	for _, c := range repo.Concepts {
-		conceptMap[c.ID] = c
+	// 1. Calculate Priority for each concept
+	conceptMap := make(map[string]*models.Concept)
+	unlockCount := make(map[string]int)
+	for _, edge := range repo.ConceptEdges {
+		unlockCount[edge.To]++
 	}
 
-	// 2. Topological Sort (Kahn's Algorithm variant)
-	// We want to order units such that prerequisites come first.
+	priorities := make(map[string]float64)
+	for i := range repo.Concepts {
+		c := &repo.Concepts[i]
+		conceptMap[c.ID] = c
+
+		priority := c.Importance
+		switch c.Role {
+		case models.RoleFoundational:
+			priority += 2000
+		case models.RoleCore:
+			priority += 1000
+		case models.RolePeripheral:
+			priority -= 500
+		}
+		priority += float64(unlockCount[c.ID]) * 50
+		
+		// Penalty for being deep in the dependency graph
+		priority -= float64(len(c.PrerequisiteIDs)) * 100
+
+		priorities[c.ID] = priority
+	}
+
+	// 2. Ordered IDs based on Priority
+	type conceptPriority struct {
+		id       string
+		priority float64
+	}
+	var sortedPriorities []conceptPriority
+	for id, p := range priorities {
+		sortedPriorities = append(sortedPriorities, conceptPriority{id, p})
+	}
+	sort.Slice(sortedPriorities, func(i, j int) bool {
+		return sortedPriorities[i].priority > sortedPriorities[j].priority
+	})
+
+	// 3. Respect Prerequisites (Topological Pass)
 	var orderedIDs []string
 	visited := make(map[string]bool)
-	temp := make(map[string]bool)
-
+	inProgress := make(map[string]bool)
+	
 	var visit func(id string)
 	visit = func(id string) {
-		if temp[id] {
-			// Cycle detected or already in progress - skip for now
+		if inProgress[id] || visited[id] {
 			return
 		}
-		if !visited[id] {
-			temp[id] = true
-			c := conceptMap[id]
-			for _, preID := range c.PrerequisiteIDs {
-				if _, exists := conceptMap[preID]; exists {
-					visit(preID)
-				}
+		inProgress[id] = true
+		c := conceptMap[id]
+		// Only strictly required foundational prerequisites
+		for _, preID := range c.PrerequisiteIDs {
+			pre := conceptMap[preID]
+			if pre != nil && (pre.Role == models.RoleFoundational || pre.Role == models.RoleCore) {
+				visit(preID)
 			}
-			visited[id] = true
-			temp[id] = false
-			orderedIDs = append(orderedIDs, id)
 		}
+		visited[id] = true
+		inProgress[id] = false
+		orderedIDs = append(orderedIDs, id)
 	}
 
-	// Start with highest importance concepts but respect their prerequisites
-	for _, c := range repo.Concepts {
-		visit(c.ID)
+	for _, cp := range sortedPriorities {
+		visit(cp.id)
 	}
 
-	// 3. Build Units and Calculate Coverage
+	// 4. Build Units and Calculate Coverage
 	units := make([]models.LearningUnit, 0, len(orderedIDs))
 	totalSymbols := 0
 	for _, f := range repo.Files {
@@ -861,7 +924,6 @@ func (g *Generator) GenerateUnits(repo *models.Repository) []models.LearningUnit
 
 	coveredSymbols := make(map[string]bool)
 	coveredConcepts := make(map[string]bool)
-
 	totalImportance := 0.0
 	for _, c := range repo.Concepts {
 		totalImportance += c.Importance
@@ -897,28 +959,97 @@ func (g *Generator) GenerateUnits(repo *models.Repository) []models.LearningUnit
 			coverage.ConceptPercentage = (float64(coverage.ConceptsCovered) / float64(len(repo.Concepts))) * 100
 		}
 
-		reason := "Core architectural component"
-		if c.Importance > 1000 {
-			reason = "Foundational system element"
-		} else if strings.Contains(strings.ToLower(c.Name), "test") {
-			reason = "Verification and usage examples"
-		}
-
 		units = append(units, models.LearningUnit{
 			Order:                   i + 1,
 			ID:                      c.ID,
 			Name:                    c.Name,
 			SymbolIDs:               c.SymbolIDs,
 			PrerequisiteIDs:         c.PrerequisiteIDs,
-			Reason:                  reason,
+			Reason:                  c.Summary.WhyLearn,
 			EstimatedTimeMinutes:    time,
 			KnowledgeGainPercentage: gain,
 			Coverage:                coverage,
+			Slice:                   g.extractSlice(repo, c),
 			Importance:              c.Importance,
 		})
 	}
 
 	return units
+}
+
+// extractSlice identifies the relevant code regions for a concept across all files.
+func (g *Generator) extractSlice(repo *models.Repository, concept *models.Concept) models.CodeSlice {
+	slice := models.CodeSlice{
+		ConceptID: concept.ID,
+		Files:     make([]models.FileSlice, 0),
+	}
+
+	// 1. Group symbols by file
+	fileToSyms := make(map[string][]models.Symbol)
+	idToFile := make(map[string]*models.File)
+	for _, f := range repo.Files {
+		for _, sym := range f.Symbols {
+			idToFile[sym.ID] = f
+			for _, cid := range concept.SymbolIDs {
+				if sym.ID == cid {
+					fileToSyms[f.Path] = append(fileToSyms[f.Path], sym)
+					break
+				}
+			}
+		}
+	}
+
+	totalHidden := 0
+	for path, syms := range fileToSyms {
+		fileSlice := models.FileSlice{
+			FilePath: path,
+			Ranges:   make([]models.LineRange, 0),
+		}
+
+		// 2. Collect ranges
+		for _, sym := range syms {
+			fileSlice.Ranges = append(fileSlice.Ranges, models.LineRange{
+				Start: sym.StartLine,
+				End:   sym.EndLine,
+			})
+		}
+
+		// 3. Sort and Merge ranges
+		sort.Slice(fileSlice.Ranges, func(i, j int) bool {
+			return fileSlice.Ranges[i].Start < fileSlice.Ranges[j].Start
+		})
+
+		merged := make([]models.LineRange, 0)
+		if len(fileSlice.Ranges) > 0 {
+			curr := fileSlice.Ranges[0]
+			for i := 1; i < len(fileSlice.Ranges); i++ {
+				next := fileSlice.Ranges[i]
+				if next.Start <= curr.End+1 { // Merge adjacent or overlapping
+					if next.End > curr.End {
+						curr.End = next.End
+					}
+				} else {
+					merged = append(merged, curr)
+					curr = next
+				}
+			}
+			merged = append(merged, curr)
+		}
+		fileSlice.Ranges = merged
+
+		// 4. Calculate hidden lines in this file
+		shownLines := 0
+		for _, r := range merged {
+			shownLines += (r.End - r.Start + 1)
+		}
+		f := idToFile[syms[0].ID]
+		totalHidden += (f.TotalLines - shownLines)
+
+		slice.Files = append(slice.Files, fileSlice)
+	}
+
+	slice.HiddenLinesCount = totalHidden
+	return slice
 }
 
 // Generate produces a list of LearningSteps (Legacy file-based path).
