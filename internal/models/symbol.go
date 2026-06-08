@@ -9,6 +9,24 @@ const (
 	MethodSymbol    SymbolKind = "method"
 )
 
+type ReferenceType string
+
+const (
+	RefField     ReferenceType = "field"
+	RefParameter ReferenceType = "parameter"
+	RefReturn    ReferenceType = "return"
+	RefEmbed     ReferenceType = "embed"
+	RefImplement ReferenceType = "implements"
+	RefConstruct ReferenceType = "constructs"
+	RefCall      ReferenceType = "calls"
+)
+
+// Reference represents a typed reference to another symbol.
+type Reference struct {
+	Name string
+	Type ReferenceType
+}
+
 // Symbol represents an architectural element like a struct, interface, or function.
 type Symbol struct {
 	// ID is a unique identifier, e.g., "github.com/user/repo.Struct.Method"
@@ -24,8 +42,8 @@ type Symbol struct {
 	// Receiver is the name of the struct/interface for methods.
 	Receiver string
 
-	// References is a list of type names or symbol names referenced by this symbol.
-	References []string
+	// References is a list of typed references to other symbols.
+	References []Reference
 
 	FilePath string
 
@@ -38,6 +56,7 @@ type Symbol struct {
 
 // SymbolEdge represents a reference from one symbol to another.
 type SymbolEdge struct {
-	From string // Symbol ID
-	To   string // Symbol ID
+	From string        // Symbol ID
+	To   string        // Symbol ID
+	Type ReferenceType // Type of reference
 }

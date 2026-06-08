@@ -173,9 +173,9 @@ func (b *RepositoryBuilder) Build(ctx context.Context, root string) (*models.Rep
 		for _, sym := range f.Symbols {
 			for _, ref := range sym.References {
 				var targetID string
-				if strings.Contains(ref, ".") {
+				if strings.Contains(ref.Name, ".") {
 					// Qualified reference: pkg.Type
-					parts := strings.Split(ref, ".")
+					parts := strings.Split(ref.Name, ".")
 					alias := parts[0]
 					typeName := parts[1]
 					if fullPath, ok := importMap[alias]; ok {
@@ -184,7 +184,7 @@ func (b *RepositoryBuilder) Build(ctx context.Context, root string) (*models.Rep
 					}
 				} else {
 					// Local reference: Type
-					key := fmt.Sprintf("%s.%s", pkgPath, ref)
+					key := fmt.Sprintf("%s.%s", pkgPath, ref.Name)
 					targetID = symbolMap[key]
 				}
 
@@ -192,16 +192,116 @@ func (b *RepositoryBuilder) Build(ctx context.Context, root string) (*models.Rep
 					symbolEdges = append(symbolEdges, models.SymbolEdge{
 						From: sym.ID,
 						To:   targetID,
+						Type: ref.Type,
 					})
 				}
 			}
 		}
 	}
 
-	return &models.Repository{
+	// 3. Interface Implementation Detection (Heuristic)
+	var interfaces []*models.Symbol
+	var structs []*models.Symbol
+	structMethods := make(map[string]map[string]bool) // structID -> methodNames
+
+	for _, f := range files {
+		for i := range f.Symbols {
+			sym := &f.Symbols[i]
+			if sym.Kind == models.InterfaceSymbol {
+				interfaces = append(interfaces, sym)
+			} else if sym.Kind == models.StructSymbol {
+				structs = append(structs, sym)
+			} else if sym.Kind == models.MethodSymbol && sym.Receiver != "" {
+				pkgPath := sym.Package
+				structKey := fmt.Sprintf("%s.%s", pkgPath, sym.Receiver)
+				structID := symbolMap[structKey]
+				if structID != "" {
+					if structMethods[structID] == nil {
+						structMethods[structID] = make(map[string]bool)
+					}
+					structMethods[structID][sym.Name] = true
+				}
+			}
+		}
+	}
+
+	for _, iface := range interfaces {
+		if len(iface.References) == 0 {
+			continue
+		}
+		for _, str := range structs {
+			matches := true
+			hasMethods := false
+			for _, ref := range iface.References {
+				if ref.Type == models.RefCall {
+					hasMethods = true
+					if !structMethods[str.ID][ref.Name] {
+						matches = false
+						break
+					}
+				}
+			}
+			if matches && hasMethods {
+				symbolEdges = append(symbolEdges, models.SymbolEdge{
+					From: str.ID,
+					To:   iface.ID,
+					Type: models.RefImplement,
+				})
+			}
+		}
+	}
+
+	repo := &models.Repository{
 		Files:       files,
 		SymbolEdges: symbolEdges,
-	}, nil
+	}
+
+	ranker := &Ranker{}
+	ranker.Rank(repo)
+
+	detector := &ConceptDetector{}
+	repo.Concepts = detector.Detect(repo)
+
+	return repo, nil
+}
+
+// ConceptDetector clusters symbols into logical high-level features.
+type ConceptDetector struct{}
+
+// Detect analyzes the repository and groups symbols into Concepts.
+func (cd *ConceptDetector) Detect(repo *models.Repository) []models.Concept {
+	conceptsMap := make(map[string]*models.Concept)
+
+	// Heuristic 1: Group methods with their receiver structs/interfaces
+	for _, f := range repo.Files {
+		for _, sym := range f.Symbols {
+			if sym.Kind == models.MethodSymbol && sym.Receiver != "" {
+				conceptName := sym.Receiver + " Lifecycle"
+				if _, ok := conceptsMap[conceptName]; !ok {
+					conceptsMap[conceptName] = &models.Concept{
+						Name: conceptName,
+					}
+				}
+				conceptsMap[conceptName].SymbolIDs = append(conceptsMap[conceptName].SymbolIDs, sym.ID)
+				conceptsMap[conceptName].Score += sym.Score
+			}
+		}
+	}
+
+	// Heuristic 2: Group symbols by common prefix (for non-methods)
+	// (To be implemented or refined)
+
+	var concepts []models.Concept
+	for _, c := range conceptsMap {
+		concepts = append(concepts, *c)
+	}
+
+	// Sort concepts by score
+	sort.Slice(concepts, func(i, j int) bool {
+		return concepts[i].Score > concepts[j].Score
+	})
+
+	return concepts
 }
 
 // Classifier determines the role of a file in the project structure.
@@ -393,13 +493,90 @@ func (r *Ranker) Rank(repo *models.Repository) {
 			if len(sym.Name) > 0 && sym.Name[0] >= 'A' && sym.Name[0] <= 'Z' {
 				sym.Score += 20
 			}
+
+			// Boilerplate Penalties
+			boilerplate := map[string]bool{
+				"Len": true, "Less": true, "Swap": true, "String": true, "Error": true,
+			}
+			if boilerplate[sym.Name] {
+				sym.Score -= 40
+			}
 		}
 	}
 
-	// 2. Apply Centrality (Incoming References)
+	// 2. Apply Centrality (Incoming References with typed weights)
+	primitives := map[string]bool{
+		"string": true, "int": true, "int64": true, "bool": true, "error": true,
+		"interface{}": true, "any": true, "float64": true, "byte": true, "rune": true,
+	}
+
 	for _, edge := range repo.SymbolEdges {
+		if primitives[strings.ToLower(edge.To)] {
+			continue
+		}
 		if target, ok := idToSymbol[edge.To]; ok {
-			target.Score += 30
+			var weight float64
+			switch edge.Type {
+			case models.RefImplement:
+				weight = 100
+			case models.RefEmbed:
+				weight = 80
+			case models.RefField:
+				weight = 50
+			case models.RefConstruct:
+				weight = 40
+			case models.RefReturn:
+				weight = 20
+			case models.RefParameter:
+				weight = 10
+			case models.RefCall:
+				weight = 10
+			default:
+				weight = 10
+			}
+			target.Score += weight
+		}
+	}
+
+	// 2.5 Entrypoint Reachability
+	// Find distance from entrypoint functions to all other symbols
+	distances := make(map[string]int)
+	queue := []string{}
+
+	// Identify entrypoint symbols
+	for _, f := range repo.Files {
+		if f.Role == models.RoleEntrypoint {
+			for _, sym := range f.Symbols {
+				if sym.Kind == models.FunctionSymbol && sym.Name == "main" {
+					distances[sym.ID] = 0
+					queue = append(queue, sym.ID)
+				}
+			}
+		}
+	}
+
+	// Adjacency list for BFS (From -> To)
+	adj := make(map[string][]string)
+	for _, edge := range repo.SymbolEdges {
+		adj[edge.From] = append(adj[edge.From], edge.To)
+	}
+
+	for len(queue) > 0 {
+		curr := queue[0]
+		queue = queue[1:]
+		dist := distances[curr]
+
+		for _, neighbor := range adj[curr] {
+			if _, seen := distances[neighbor]; !seen {
+				distances[neighbor] = dist + 1
+				queue = append(queue, neighbor)
+				
+				// Apply reachability bonus
+				if target, ok := idToSymbol[neighbor]; ok {
+					bonus := 100.0 / float64(dist+1)
+					target.Score += bonus
+				}
+			}
 		}
 	}
 

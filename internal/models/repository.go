@@ -6,4 +6,6 @@ type Repository struct {
 	Files []*File
 	// SymbolEdges represents the reference graph between symbols.
 	SymbolEdges []SymbolEdge
+	// Concepts represents logical clusters of symbols.
+	Concepts []Concept
 }

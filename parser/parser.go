@@ -121,18 +121,19 @@ func (p *GoParser) Parse(path string) (*models.File, error) {
 	}, nil
 }
 
-// extractReferences finds types referenced by a symbol (fields, params, returns).
-func (p *GoParser) extractReferences(f *ast.File, sym *models.Symbol) []string {
-	var refs []string
+// extractReferences finds types referenced by a symbol (fields, params, returns, constructs, embeds).
+func (p *GoParser) extractReferences(f *ast.File, sym *models.Symbol) []models.Reference {
+	var refs []models.Reference
 	seen := make(map[string]struct{})
 
-	addRef := func(name string) {
+	addRef := func(name string, refType models.ReferenceType) {
 		if name == "" {
 			return
 		}
-		if _, ok := seen[name]; !ok {
-			refs = append(refs, name)
-			seen[name] = struct{}{}
+		key := name + string(refType)
+		if _, ok := seen[key]; !ok {
+			refs = append(refs, models.Reference{Name: name, Type: refType})
+			seen[key] = struct{}{}
 		}
 	}
 
@@ -141,21 +142,26 @@ func (p *GoParser) extractReferences(f *ast.File, sym *models.Symbol) []string {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
 			if d.Name.Name == sym.Name {
-				// Check receiver for methods
-				if sym.Kind == models.MethodSymbol && d.Recv != nil {
-					// We already know the receiver, but let's check if it references anything else
-				}
 				if sym.Kind == models.FunctionSymbol || sym.Kind == models.MethodSymbol {
+					isConstructor := strings.HasPrefix(sym.Name, "New")
+
 					// Parameters
 					if d.Type.Params != nil {
 						for _, field := range d.Type.Params.List {
-							p.collectTypeRefs(field.Type, addRef)
+							p.collectTypeRefs(field.Type, models.RefParameter, addRef)
 						}
 					}
 					// Return types
 					if d.Type.Results != nil {
 						for _, field := range d.Type.Results.List {
-							p.collectTypeRefs(field.Type, addRef)
+							refType := models.RefReturn
+							if isConstructor {
+								targetName := strings.TrimPrefix(sym.Name, "New")
+								if p.isTypeMatch(field.Type, targetName) {
+									refType = models.RefConstruct
+								}
+							}
+							p.collectTypeRefs(field.Type, refType, addRef)
 						}
 					}
 				}
@@ -168,11 +174,18 @@ func (p *GoParser) extractReferences(f *ast.File, sym *models.Symbol) []string {
 						switch t := ts.Type.(type) {
 						case *ast.StructType:
 							for _, field := range t.Fields.List {
-								p.collectTypeRefs(field.Type, addRef)
+								refType := models.RefField
+								if field.Names == nil {
+									refType = models.RefEmbed
+								}
+								p.collectTypeRefs(field.Type, refType, addRef)
 							}
 						case *ast.InterfaceType:
 							for _, method := range t.Methods.List {
-								p.collectTypeRefs(method.Type, addRef)
+								if len(method.Names) > 0 {
+									addRef(method.Names[0].Name, models.RefCall)
+								}
+								p.collectTypeRefs(method.Type, models.RefParameter, addRef)
 							}
 						}
 					}
@@ -183,35 +196,42 @@ func (p *GoParser) extractReferences(f *ast.File, sym *models.Symbol) []string {
 	return refs
 }
 
-func (p *GoParser) collectTypeRefs(expr ast.Expr, add func(string)) {
+func (p *GoParser) isTypeMatch(expr ast.Expr, targetName string) bool {
 	switch e := expr.(type) {
 	case *ast.Ident:
-		add(e.Name)
+		return e.Name == targetName
+	case *ast.StarExpr:
+		return p.isTypeMatch(e.X, targetName)
+	}
+	return false
+}
+
+func (p *GoParser) collectTypeRefs(expr ast.Expr, refType models.ReferenceType, add func(string, models.ReferenceType)) {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		add(e.Name, refType)
 	case *ast.SelectorExpr:
-		// External package reference like "models.File"
-		// For now, we only care about the type name in our own analysis if it's internal
-		// but we can store the whole thing "pkg.Type"
 		if x, ok := e.X.(*ast.Ident); ok {
-			add(x.Name + "." + e.Sel.Name)
+			add(x.Name+"."+e.Sel.Name, refType)
 		}
 	case *ast.StarExpr:
-		p.collectTypeRefs(e.X, add)
+		p.collectTypeRefs(e.X, refType, add)
 	case *ast.ArrayType:
-		p.collectTypeRefs(e.Elt, add)
+		p.collectTypeRefs(e.Elt, refType, add)
 	case *ast.MapType:
-		p.collectTypeRefs(e.Key, add)
-		p.collectTypeRefs(e.Value, add)
+		p.collectTypeRefs(e.Key, refType, add)
+		p.collectTypeRefs(e.Value, refType, add)
 	case *ast.ChanType:
-		p.collectTypeRefs(e.Value, add)
+		p.collectTypeRefs(e.Value, refType, add)
 	case *ast.FuncType:
 		if e.Params != nil {
 			for _, f := range e.Params.List {
-				p.collectTypeRefs(f.Type, add)
+				p.collectTypeRefs(f.Type, refType, add)
 			}
 		}
 		if e.Results != nil {
 			for _, f := range e.Results.List {
-				p.collectTypeRefs(f.Type, add)
+				p.collectTypeRefs(f.Type, refType, add)
 			}
 		}
 	}
