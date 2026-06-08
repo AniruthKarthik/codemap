@@ -60,6 +60,7 @@ function App() {
   const [expandedGaps, setExpandedGaps] = useState<Set<number>>(new Set())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showFlowGraph, setShowFlowGraph] = useState(false)
   
   // File Browser State
   const [isPickingFolder, setIsPickingFolder] = useState(false)
@@ -619,18 +620,19 @@ function App() {
             </div>
           )}
 
-          {/* Control Flow Graph */}
+          {/* Control Flow Graph Button */}
           {selectedStep?.CallGraph && Object.keys(selectedStep.CallGraph).length > 0 && (
             <div className="context-section" style={{marginBottom: 0}}>
               <h3>Control Flow Graph</h3>
-              <div style={{ background: '#fafafa', borderRadius: '8px', padding: '16px', border: '1px solid var(--border-color)', marginTop: '8px' }}>
-                <MermaidChart chart={[
-                  "graph TD",
-                  ...Object.entries(selectedStep.CallGraph).flatMap(([caller, targets]) => 
-                    targets.map(t => `    ${caller.replace(/[^a-zA-Z0-9_]/g, '_')}["${caller}"] --> ${t.replace(/[^a-zA-Z0-9_]/g, '_')}["${t}"]`)
-                  )
-                ].join('\n')} />
-              </div>
+              <p style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px', marginTop: 0}}>
+                Visualize method calls and architectural flow within this file.
+              </p>
+              <button 
+                className="ai-generate-btn" 
+                onClick={() => setShowFlowGraph(true)}
+              >
+                Open Flow Graph
+              </button>
             </div>
           )}
 
@@ -705,8 +707,26 @@ function App() {
               </button>
             </form>
           </div>
-        </div>
       </div>
+
+      {showFlowGraph && selectedStep?.CallGraph && (
+        <div className="modal-overlay" onClick={() => setShowFlowGraph(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Control Flow: {currentFile.split('/').pop()}</h2>
+              <button className="modal-close-btn" onClick={() => setShowFlowGraph(false)}>Close</button>
+            </div>
+            <div className="modal-body">
+              <MermaidChart chart={[
+                "graph TD",
+                ...Object.entries(selectedStep.CallGraph).flatMap(([caller, targets]) => 
+                  targets.map(t => `    ${caller.replace(/[^a-zA-Z0-9_]/g, '_')}["${caller}"] --> ${t.replace(/[^a-zA-Z0-9_]/g, '_')}["${t}"]`)
+                )
+              ].join('\n')} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
