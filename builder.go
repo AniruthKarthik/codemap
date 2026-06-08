@@ -104,13 +104,103 @@ func (b *RepositoryBuilder) Build(ctx context.Context, root string) (*models.Rep
 		return nil, err
 	}
 
+	// Hydrate symbols and classify files
 	classifier := &Classifier{}
+	allPaths := make([]string, 0, len(files))
+	for _, f := range files {
+		allPaths = append(allPaths, f.Path)
+	}
+	commonRoot := findCommonRoot(allPaths)
+	moduleName := getModuleName(commonRoot)
+
 	for _, f := range files {
 		f.Role = classifier.Classify(f)
+
+		relPath, _ := filepath.Rel(commonRoot, f.Path)
+		dir := filepath.Dir(relPath)
+		var pkgPath string
+		if dir == "." {
+			pkgPath = moduleName
+		} else {
+			pkgPath = filepath.Join(moduleName, dir)
+		}
+		pkgPath = filepath.ToSlash(pkgPath)
+
+		for i := range f.Symbols {
+			sym := &f.Symbols[i]
+			sym.Package = pkgPath
+			if sym.Kind == models.MethodSymbol && sym.Receiver != "" {
+				sym.ID = fmt.Sprintf("%s.%s.%s", pkgPath, sym.Receiver, sym.Name)
+			} else {
+				sym.ID = fmt.Sprintf("%s.%s", pkgPath, sym.Name)
+			}
+		}
+	}
+
+	// 2. Build Symbol Reference Graph
+	var symbolEdges []models.SymbolEdge
+	// Map of (packagePath, name) -> ID
+	symbolMap := make(map[string]string)
+	for _, f := range files {
+		for _, sym := range f.Symbols {
+			// For structs/interfaces/functions, key is pkgPath.Name
+			// For methods, we don't usually reference them by name directly in type refs,
+			// but we can add them just in case.
+			key := fmt.Sprintf("%s.%s", sym.Package, sym.Name)
+			symbolMap[key] = sym.ID
+		}
+	}
+
+	for _, f := range files {
+		// Map of import alias (or package name) to full path
+		importMap := make(map[string]string)
+		for _, imp := range f.Imports {
+			parts := strings.Split(imp, "/")
+			pkgName := parts[len(parts)-1]
+			importMap[pkgName] = imp
+		}
+
+		relPath, _ := filepath.Rel(commonRoot, f.Path)
+		dir := filepath.Dir(relPath)
+		var pkgPath string
+		if dir == "." {
+			pkgPath = moduleName
+		} else {
+			pkgPath = filepath.Join(moduleName, dir)
+		}
+		pkgPath = filepath.ToSlash(pkgPath)
+
+		for _, sym := range f.Symbols {
+			for _, ref := range sym.References {
+				var targetID string
+				if strings.Contains(ref, ".") {
+					// Qualified reference: pkg.Type
+					parts := strings.Split(ref, ".")
+					alias := parts[0]
+					typeName := parts[1]
+					if fullPath, ok := importMap[alias]; ok {
+						key := fmt.Sprintf("%s.%s", fullPath, typeName)
+						targetID = symbolMap[key]
+					}
+				} else {
+					// Local reference: Type
+					key := fmt.Sprintf("%s.%s", pkgPath, ref)
+					targetID = symbolMap[key]
+				}
+
+				if targetID != "" {
+					symbolEdges = append(symbolEdges, models.SymbolEdge{
+						From: sym.ID,
+						To:   targetID,
+					})
+				}
+			}
+		}
 	}
 
 	return &models.Repository{
-		Files: files,
+		Files:       files,
+		SymbolEdges: symbolEdges,
 	}, nil
 }
 
@@ -282,7 +372,38 @@ func (r *Ranker) Rank(repo *models.Repository) {
 		return
 	}
 
-	// 1. Resolve import paths for each file and count package imports
+	// 1. Initialize Symbol Scores
+	idToSymbol := make(map[string]*models.Symbol)
+	for _, f := range repo.Files {
+		for i := range f.Symbols {
+			sym := &f.Symbols[i]
+			idToSymbol[sym.ID] = sym
+
+			// Base score by kind
+			switch sym.Kind {
+			case models.StructSymbol:
+				sym.Score = 50
+			case models.InterfaceSymbol:
+				sym.Score = 60
+			case models.FunctionSymbol, models.MethodSymbol:
+				sym.Score = 20
+			}
+
+			// Bonus for exported symbols
+			if len(sym.Name) > 0 && sym.Name[0] >= 'A' && sym.Name[0] <= 'Z' {
+				sym.Score += 20
+			}
+		}
+	}
+
+	// 2. Apply Centrality (Incoming References)
+	for _, edge := range repo.SymbolEdges {
+		if target, ok := idToSymbol[edge.To]; ok {
+			target.Score += 30
+		}
+	}
+
+	// 3. Resolve import paths for each file and count package imports (for file-level context)
 	paths := make([]string, 0, len(repo.Files))
 	for _, f := range repo.Files {
 		paths = append(paths, f.Path)
@@ -290,12 +411,28 @@ func (r *Ranker) Rank(repo *models.Repository) {
 	root := findCommonRoot(paths)
 	moduleName := getModuleName(root)
 
-	// Map of file path to its resolved package import path
-	fileToPkgPath := make(map[string]string)
-	// Map of package import path to count of files importing it
 	packageImportCount := make(map[string]int)
-
 	for _, f := range repo.Files {
+		for _, imp := range f.Imports {
+			packageImportCount[imp]++
+		}
+	}
+
+	// 4. Score each file based on its symbols and role
+	for _, f := range repo.Files {
+		var score float64
+
+		// File score is primarily the sum of its architectural symbols
+		for _, sym := range f.Symbols {
+			score += sym.Score
+		}
+
+		// Entrypoint bonus (handled by role but let's keep it explicit for now)
+		if f.Role == models.RoleEntrypoint {
+			score += 100
+		}
+
+		// Import context
 		relPath, _ := filepath.Rel(root, f.Path)
 		dir := filepath.Dir(relPath)
 		var pkgPath string
@@ -305,87 +442,33 @@ func (r *Ranker) Rank(repo *models.Repository) {
 			pkgPath = filepath.Join(moduleName, dir)
 		}
 		pkgPath = filepath.ToSlash(pkgPath)
-		fileToPkgPath[f.Path] = pkgPath
-
-		for _, imp := range f.Imports {
-			packageImportCount[imp]++
-		}
-	}
-
-	// 2. Score each file
-	for _, f := range repo.Files {
-		var score int64
-
-		// +100 contains main()
-		for _, fn := range f.Functions {
-			if fn.Name == "main" && f.Package == "package main" {
-				score += 100
-				break
-			}
-		}
-
-		// +20 exported functions
-		for _, fn := range f.Functions {
-			if fn.Exported {
-				score += 20
-			}
-		}
-
-		// +10 import count
-		score += int64(len(f.Imports)) * 10
-
-		// +15 imported by others
-		pkgPath := fileToPkgPath[f.Path]
-		score += int64(packageImportCount[pkgPath]) * 15
+		score += float64(packageImportCount[pkgPath]) * 15
 
 		// Apply role-based penalties
 		switch f.Role {
 		case models.RoleTest:
-			score = int64(float64(score) * 0.1) // -90% penalty
+			score = score * 0.1 // -90% penalty
 		case models.RoleExample, models.RoleGenerated:
-			score = int64(float64(score) * 0.3) // -70% penalty
+			score = score * 0.3 // -70% penalty
 		case models.RoleInfrastructure:
-			score = int64(float64(score) * 0.5) // -50% penalty
+			score = score * 0.5 // -50% penalty
 		}
 
-		f.Score = score
+		f.Score = int64(score)
 
-		// 3. Score each function and store in File.Blocks
-		f.Blocks = make([]models.CodeBlock, 0, len(f.Functions))
-		for _, fn := range f.Functions {
-			var fnScore float64
-			switch fn.Name {
-			case "main":
-				if f.Package == "package main" {
-					fnScore = 100
-				}
-			case "NewRouter":
-				fnScore = 80
-			case "Login":
-				fnScore = 75
-			case "helper":
-				fnScore = 15
-			case "debug":
-				fnScore = 5
-			default:
-				// Default score for other functions could be based on exported status
-				if fn.Exported {
-					fnScore = 20
-				} else {
-					fnScore = 10
-				}
-			}
-
+		// 5. Update File.Blocks from symbols (replacing old function-only blocks)
+		f.Blocks = make([]models.CodeBlock, 0, len(f.Symbols))
+		for _, sym := range f.Symbols {
 			f.Blocks = append(f.Blocks, models.CodeBlock{
-				Name:      fn.Name,
-				StartLine: fn.StartLine,
-				EndLine:   fn.EndLine,
-				Score:     fnScore,
+				Name:      sym.Name,
+				StartLine: sym.StartLine,
+				EndLine:   sym.EndLine,
+				Score:     sym.Score,
 			})
 		}
 	}
 
-	// 4. Sort files by score descending
+	// 6. Sort files by score descending
 	sort.Slice(repo.Files, func(i, j int) bool {
 		return repo.Files[i].Score > repo.Files[j].Score
 	})

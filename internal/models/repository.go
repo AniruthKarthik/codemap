@@ -4,4 +4,6 @@ package models
 type Repository struct {
 	// Files is a slice of File models belonging to the repository.
 	Files []*File
+	// SymbolEdges represents the reference graph between symbols.
+	SymbolEdges []SymbolEdge
 }

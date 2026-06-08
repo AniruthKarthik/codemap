@@ -27,6 +27,8 @@ type File struct {
 	Functions []Function
 	// Blocks is a list of code blocks identified in the file.
 	Blocks []CodeBlock
+	// Symbols is a list of architectural symbols defined in the file.
+	Symbols []Symbol
 	// Score is a calculated metric for the file's importance or complexity.
 	Score int64
 }
