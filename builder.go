@@ -1173,24 +1173,58 @@ func (g *Generator) extractSlice(repo *models.Repository, concept *models.Concep
 func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
 	steps := make([]models.LearningStep, 0, len(repo.Files))
 
+	// Map symbol ID to concept for better reasoning
+	symToConcept := make(map[string]*models.Concept)
+	for i := range repo.Concepts {
+		c := &repo.Concepts[i]
+		for _, symID := range c.SymbolIDs {
+			symToConcept[symID] = c
+		}
+	}
+
 	for i, f := range repo.Files {
 		reason := "Key repository component"
 
-		// Determine reason based on file characteristics
-		isEntrypoint := false
-		for _, fn := range f.Functions {
-			if fn.Name == "main" && f.Package == "package main" {
-				isEntrypoint = true
-				break
+		// Find the most important concept associated with this file
+		conceptCounts := make(map[string]float64)
+		for _, sym := range f.Symbols {
+			if c, ok := symToConcept[sym.ID]; ok {
+				conceptCounts[c.ID] += c.Importance
 			}
 		}
 
-		if isEntrypoint {
-			reason = "Application entrypoint"
-		} else if f.Score > 50 {
-			reason = "Core business logic or utility"
+		var bestConcept *models.Concept
+		maxImportance := -1.0
+		for id, importance := range conceptCounts {
+			if importance > maxImportance {
+				for j := range repo.Concepts {
+					if repo.Concepts[j].ID == id {
+						bestConcept = &repo.Concepts[j]
+						maxImportance = importance
+						break
+					}
+				}
+			}
+		}
+
+		if bestConcept != nil && bestConcept.Summary.Purpose != "" {
+			reason = bestConcept.Summary.Purpose
 		} else {
-			reason = "Supporting implementation detail"
+			// Fallback to role-based reasoning
+			switch f.Role {
+			case models.RoleEntrypoint:
+				reason = "Application entrypoint"
+			case models.RoleCoreLogic:
+				reason = "Core business logic or utility"
+			case models.RoleInfrastructure:
+				reason = "Infrastructure or configuration"
+			case models.RoleTest:
+				reason = "Test suite for system verification"
+			case models.RoleExample:
+				reason = "Example usage of the system"
+			case models.RoleGenerated:
+				reason = "Generated code"
+			}
 		}
 
 		steps = append(steps, models.LearningStep{
