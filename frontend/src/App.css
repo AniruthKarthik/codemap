@@ -1,0 +1,385 @@
+:root {
+  --bg-color: #ffffff;
+  --panel-bg: #f6f8fa;
+  --border-color: #d0d7de;
+  --text-primary: #24292f;
+  --text-secondary: #57606a;
+  --accent-color: #0969da;
+  --highlight-bg: #e7f3ff;
+  --font-mono: 'ui-monospace', 'SFMono-Regular', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* ... existing styles ... */
+
+.welcome-screen {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  background: radial-gradient(circle at center, #ffffff 0%, #f0f4f8 100%);
+  padding: 20px;
+}
+
+.welcome-card {
+  background: white;
+  padding: 60px;
+  border-radius: 16px;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+  text-align: center;
+  max-width: 600px;
+  width: 100%;
+}
+
+.welcome-card h1 {
+  font-size: 32px;
+  margin-bottom: 16px;
+  color: #1a1a1a;
+  letter-spacing: -0.5px;
+}
+
+.welcome-card p {
+  font-size: 18px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 32px;
+}
+
+.primary-button {
+  background-color: #0969da;
+  color: white;
+  border: none;
+  padding: 14px 28px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.1s ease, background-color 0.2s ease;
+  box-shadow: 0 4px 12px rgba(9, 105, 218, 0.2);
+}
+
+.primary-button:hover {
+  background-color: #085cc1;
+  transform: translateY(-1px);
+}
+
+.primary-button:active {
+  transform: translateY(0);
+}
+
+/* File Browser Modal */
+.browser-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.browser-modal {
+  background: white;
+  width: 700px;
+  height: 600px;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.browser-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border-color);
+  background: #f8fafd;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.browser-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.browser-header-top h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.browser-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: #fff;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  word-break: break-all;
+}
+
+.browser-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.browser-item {
+  padding: 12px 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  transition: background 0.1s;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.browser-item:last-child {
+  border-bottom: none;
+}
+
+.browser-item:hover {
+  background-color: #f0f7ff;
+}
+
+.browser-item-icon {
+  margin-right: 16px;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+}
+
+.browser-item-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.browser-footer {
+  padding: 20px 24px;
+  border-top: 1px solid var(--border-color);
+  background: #f8fafd;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.secondary-button {
+  background: white;
+  border: 1px solid var(--border-color);
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.secondary-button:hover {
+  background: #f6f8fa;
+}
+
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app-container {
+  display: grid;
+  grid-template-columns: 300px 1fr 350px;
+  height: 100vh;
+}
+
+.pane {
+  border-right: 1px solid var(--border-color);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane:last-child {
+  border-right: none;
+}
+
+.sidebar {
+  background-color: var(--panel-bg);
+}
+
+.sidebar-header, .context-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 600;
+  background-color: var(--bg-color);
+}
+
+.reading-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.reading-item {
+  padding: 12px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 14px;
+}
+
+.reading-item:hover {
+  background-color: #f3f4f6;
+}
+
+.reading-item.active {
+  background-color: #ffffff;
+  border-left: 4px solid var(--accent-color);
+  box-shadow: inset 0 0 0 1px var(--border-color);
+}
+
+.item-path {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-top: 4px;
+  display: block;
+}
+
+.code-viewer-container {
+  background-color: var(--bg-color);
+  padding: 20px;
+  flex: 1;
+}
+
+.code-viewer {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.code-line {
+  display: flex;
+}
+
+.line-number {
+  width: 50px;
+  color: #8c959f;
+  text-align: right;
+  padding-right: 15px;
+  user-select: none;
+}
+
+.line-content {
+  flex: 1;
+}
+
+.line-important {
+  background-color: var(--highlight-bg);
+}
+
+.line-hidden {
+  opacity: 0.6;
+}
+
+.expand-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #f6f8fa;
+  color: var(--accent-color);
+  padding: 4px;
+  margin: 4px 0;
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.expand-button:hover {
+  background-color: #ebf5ff;
+}
+
+.context-pane {
+  background-color: var(--panel-bg);
+  padding: 20px;
+}
+
+.context-section {
+  margin-bottom: 24px;
+}
+
+.context-section h3 {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  letter-spacing: 0.5px;
+}
+
+.context-content {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.symbol-tag {
+  display: inline-block;
+  background-color: #ddf4ff;
+  color: #0969da;
+  border: 1px solid rgba(9, 105, 218, 0.2);
+  border-radius: 2em;
+  padding: 0px 10px;
+  margin: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.full-screen-message {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  width: 100vw;
+  font-size: 1.1rem;
+  color: var(--text-secondary);
+  background-color: var(--bg-color);
+  text-align: center;
+  padding: 40px;
+}
+
+.full-screen-message.error {
+  color: #cf222e;
+}
+
+/* Prism Overrides for Light Theme */
+.token.comment, .token.prolog, .token.doctype, .token.cdata { color: #6e7781; }
+.token.punctuation { color: #24292f; }
+.token.namespace { opacity: .7; }
+.token.property, .token.tag, .token.boolean, .token.number, .token.constant, .token.symbol, .token.deleted { color: #0550ae; }
+.token.selector, .token.attr-name, .token.string, .token.char, .token.builtin, .token.inserted { color: #0a3069; }
+.token.operator, .token.entity, .token.url, .language-css .token.string, .style .token.string { color: #cf222e; }
+.token.atrule, .token.attr-value, .token.keyword { color: #cf222e; }
+.token.function, .token.class-name { color: #8250df; }
+.token.regex, .token.important, .token.variable { color: #953800; }

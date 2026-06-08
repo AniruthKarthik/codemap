@@ -1,40 +1,29 @@
-.PHONY: all build test clean install
+.PHONY: start build clean install-deps
 
-# Binary names
-BINARY_NAME=codemap
-BENCHMARK_NAME=benchmark
+# Default target
+all: build
 
-# Build directory
-BUILD_DIR=bin
+# Install dependencies for both backend and frontend
+install-deps:
+	go mod download
+	cd frontend && npm install
 
-all: build test
+# Build the project
+build: install-deps
+	go build -o bin/codemap ./cmd/codemap
+	cd frontend && npm run build
 
-build:
-	@echo "Building $(BINARY_NAME)..."
-	@mkdir -p $(BUILD_DIR)
-	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/codemap
-	@echo "Building $(BENCHMARK_NAME)..."
-	go build -o $(BUILD_DIR)/$(BENCHMARK_NAME) ./cmd/benchmark
+# Start both backend and frontend concurrently
+# Using trap to ensure both background processes are killed on Ctrl+C
+start:
+	@echo "Starting Codemap Guided Learning Platform..."
+	@bash -c "trap 'kill 0' EXIT; \
+		go run cmd/codemap/main.go serve . & \
+		(cd frontend && npm run dev -- --port 5173) & \
+		wait"
 
-test:
-	@echo "Running tests..."
-	go test ./...
-
+# Clean build artifacts
 clean:
-	@echo "Cleaning up..."
-	rm -rf $(BUILD_DIR)
-
-install: build
-	@echo "Installing $(BINARY_NAME) to /usr/local/bin..."
-	sudo cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
-
-# Help target
-help:
-	@echo "Makefile for Codemap"
-	@echo ""
-	@echo "Usage:"
-	@echo "  make build    - Build the codemap and benchmark binaries"
-	@echo "  make test     - Run all tests"
-	@echo "  make clean    - Remove build artifacts"
-	@echo "  make install  - Install the codemap binary to /usr/local/bin"
-	@echo "  make all      - Build and test the project"
+	rm -rf bin/
+	rm -rf frontend/dist
+	rm -rf frontend/node_modules
