@@ -13,6 +13,14 @@ interface BrowserEntry {
   path: string
 }
 
+const DEFAULT_MODELS: Record<string, string> = {
+  'Gemini': 'gemini-1.5-pro',
+  'OpenAI': 'gpt-4o',
+  'Anthropic': 'claude-3-5-sonnet-20241022',
+  'Groq': 'llama-3.3-70b-versatile',
+  'Ollama (Local)': 'llama3'
+}
+
 function App() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null)
   const [selectedStepIndex, setSelectedStepIndex] = useState(0)
@@ -34,6 +42,7 @@ function App() {
 
   // AI State
   const [provider, setProvider] = useState<string>(() => localStorage.getItem('ai_provider') || '')
+  const [model, setModel] = useState<string>(() => localStorage.getItem('ai_model') || '')
   const [availableProviders, setAvailableProviders] = useState<string[]>(['Ollama (Local)'])
   const [aiContexts, setAiContexts] = useState<Record<string, {purpose: string, objective: string}>>({})
   const [chatHistories, setChatHistories] = useState<Record<string, ChatMessage[]>>({})
@@ -50,19 +59,36 @@ function App() {
   }, [provider])
 
   useEffect(() => {
+    if (model) {
+      localStorage.setItem('ai_model', model)
+    }
+  }, [model])
+
+  const handleProviderChange = (newProvider: string) => {
+    setProvider(newProvider)
+    setModel(DEFAULT_MODELS[newProvider] || '')
+  }
+
+  useEffect(() => {
     // Fetch available providers based on .env keys
     fetch(`${API_BASE}/api/ai/providers`)
       .then(res => res.json())
       .then((data: string[]) => {
         setAvailableProviders(data)
-        const saved = localStorage.getItem('ai_provider')
-        if (saved && data.includes(saved)) {
-          setProvider(saved)
+        const savedProvider = localStorage.getItem('ai_provider')
+        const savedModel = localStorage.getItem('ai_model')
+        
+        if (savedProvider && data.includes(savedProvider)) {
+          setProvider(savedProvider)
+          if (savedModel) {
+            setModel(savedModel)
+          } else {
+            setModel(DEFAULT_MODELS[savedProvider] || '')
+          }
         } else if (data.length > 0) {
-          // If the saved provider isn't available (e.g. key removed), 
-          // default to the first available non-local model if possible
           const bestDefault = data.find(p => p !== 'Ollama (Local)') || data[0]
           setProvider(bestDefault)
+          setModel(DEFAULT_MODELS[bestDefault] || '')
         }
       })
       .catch(err => console.error('Failed to get providers:', err))
@@ -171,6 +197,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           provider,
+          model,
           fileContent,
           filePath: currentFile
         })
@@ -203,6 +230,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           provider,
+          model,
           fileContent,
           filePath: currentFile,
           history: currentHistory,
@@ -389,15 +417,25 @@ function App() {
       />
 
       <div className="pane context-pane" style={{ width: rightWidth }}>
-        <div className="context-header">
+        <div className="context-header" style={{flexWrap: 'wrap', gap: '8px'}}>
           <h2 style={{margin: 0, fontSize: '16px'}}>AI Assistant</h2>
-          <select 
-            className="model-select" 
-            value={provider} 
-            onChange={e => setProvider(e.target.value)}
-          >
-            {availableProviders.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
+          <div style={{display: 'flex', gap: '8px'}}>
+            <select 
+              className="model-select" 
+              value={provider} 
+              onChange={e => handleProviderChange(e.target.value)}
+            >
+              {availableProviders.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <input 
+              type="text" 
+              className="model-select" 
+              value={model} 
+              onChange={e => setModel(e.target.value)}
+              placeholder="Model name"
+              style={{width: '180px'}}
+            />
+          </div>
         </div>
         
         <div className="context-body">

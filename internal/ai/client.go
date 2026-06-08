@@ -38,10 +38,10 @@ Content:
 `
 )
 
-func GenerateContext(provider, content, path string) (*GenerateResponse, error) {
+func GenerateContext(provider, model, content, path string) (*GenerateResponse, error) {
 	prompt := fmt.Sprintf(PromptGenerate, path, content)
 	
-	respText, err := callLLM(provider, "system", prompt, nil, "")
+	respText, err := callLLM(provider, model, "system", prompt, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -65,23 +65,28 @@ func GenerateContext(provider, content, path string) (*GenerateResponse, error) 
 	return &res, nil
 }
 
-func Chat(provider, content, path string, history []Message, prompt string) (string, error) {
+func Chat(provider, model, content, path string, history []Message, prompt string) (string, error) {
 	systemPrompt := fmt.Sprintf(PromptChatSystem, path, content)
-	return callLLM(provider, systemPrompt, prompt, history, "")
+	return callLLM(provider, model, systemPrompt, prompt, history)
 }
 
-func callLLM(provider, systemPrompt, prompt string, history []Message, modelOverride string) (string, error) {
+func callLLM(provider, model, systemPrompt, prompt string, history []Message) (string, error) {
 	switch provider {
 	case "Gemini":
-		return callGemini(systemPrompt, prompt, history)
+		if model == "" { model = "gemini-1.5-pro" }
+		return callGemini(model, systemPrompt, prompt, history)
 	case "OpenAI":
-		return callOpenAIFormat("https://api.openai.com/v1/chat/completions", os.Getenv("OPENAI_API_KEY"), "gpt-4o", systemPrompt, prompt, history)
+		if model == "" { model = "gpt-4o" }
+		return callOpenAIFormat("https://api.openai.com/v1/chat/completions", os.Getenv("OPENAI_API_KEY"), model, systemPrompt, prompt, history)
 	case "Anthropic":
-		return callAnthropic(systemPrompt, prompt, history)
+		if model == "" { model = "claude-3-5-sonnet-20241022" }
+		return callAnthropic(model, systemPrompt, prompt, history)
 	case "Groq":
-		return callOpenAIFormat("https://api.groq.com/openai/v1/chat/completions", os.Getenv("GROQ_API_KEY"), "llama3-70b-8192", systemPrompt, prompt, history)
+		if model == "" { model = "llama-3.3-70b-versatile" }
+		return callOpenAIFormat("https://api.groq.com/openai/v1/chat/completions", os.Getenv("GROQ_API_KEY"), model, systemPrompt, prompt, history)
 	case "Ollama (Local)":
-		return callOpenAIFormat("http://localhost:11434/v1/chat/completions", "dummy", "llama3", systemPrompt, prompt, history)
+		if model == "" { model = "llama3" }
+		return callOpenAIFormat("http://localhost:11434/v1/chat/completions", "dummy", model, systemPrompt, prompt, history)
 	default:
 		return "", fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -155,12 +160,12 @@ func callOpenAIFormat(url, apiKey, model, systemPrompt, prompt string, history [
 
 // --- Gemini ---
 
-func callGemini(systemPrompt, prompt string, history []Message) (string, error) {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		return "", errors.New("GEMINI_API_KEY not found in .env")
-	}
-	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=" + apiKey
+func callGemini(model, systemPrompt, prompt string, history []Message) (string, error) {
+        apiKey := os.Getenv("GEMINI_API_KEY")
+        if apiKey == "" {
+                return "", errors.New("GEMINI_API_KEY not found in .env")
+        }
+        url := "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + apiKey
 
 	type part struct {
 		Text string `json:"text"`
@@ -233,34 +238,34 @@ func callGemini(systemPrompt, prompt string, history []Message) (string, error) 
 
 // --- Anthropic ---
 
-func callAnthropic(systemPrompt, prompt string, history []Message) (string, error) {
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		return "", errors.New("ANTHROPIC_API_KEY not found in .env")
-	}
-	url := "https://api.anthropic.com/v1/messages"
+func callAnthropic(model, systemPrompt, prompt string, history []Message) (string, error) {
+        apiKey := os.Getenv("ANTHROPIC_API_KEY")
+        if apiKey == "" {
+                return "", errors.New("ANTHROPIC_API_KEY not found in .env")
+        }
+        url := "https://api.anthropic.com/v1/messages"
 
-	type message struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-	
-	var messages []message
-	for _, h := range history {
-		messages = append(messages, message{Role: h.Role, Content: h.Content})
-	}
-	if prompt != "" && prompt != systemPrompt {
-		messages = append(messages, message{Role: "user", Content: prompt})
-	} else if prompt == systemPrompt {
-	    messages = append(messages, message{Role: "user", Content: prompt})
-	    systemPrompt = "" // Clear it so we don't send it twice
-	}
+        type message struct {
+                Role    string `json:"role"`
+                Content string `json:"content"`
+        }
 
-	reqData := map[string]interface{}{
-		"model":      "claude-3-5-sonnet-20240620",
-		"max_tokens": 1024,
-		"messages":   messages,
-	}
+        var messages []message
+        for _, h := range history {
+                messages = append(messages, message{Role: h.Role, Content: h.Content})
+        }
+        if prompt != "" && prompt != systemPrompt {
+                messages = append(messages, message{Role: "user", Content: prompt})
+        } else if prompt == systemPrompt {
+            messages = append(messages, message{Role: "user", Content: prompt})
+            systemPrompt = "" // Clear it so we don't send it twice
+        }
+
+        reqData := map[string]interface{}{
+                "model":      model,
+                "max_tokens": 1024,
+                "messages":   messages,
+        }
 	if systemPrompt != "" {
 		reqData["system"] = systemPrompt
 	}

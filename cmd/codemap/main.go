@@ -275,6 +275,7 @@ func runServe() {
                 }
                 var req struct {
                         Provider    string `json:"provider"`
+                        Model       string `json:"model"`
                         FileContent string `json:"fileContent"`
                         FilePath    string `json:"filePath"`
                 }
@@ -283,7 +284,7 @@ func runServe() {
                         return
                 }
 
-                res, err := ai.GenerateContext(req.Provider, req.FileContent, req.FilePath)
+                res, err := ai.GenerateContext(req.Provider, req.Model, req.FileContent, req.FilePath)
                 if err != nil {
                         http.Error(w, err.Error(), http.StatusInternalServerError)
                         return
@@ -301,6 +302,7 @@ func runServe() {
                 }
                 var req struct {
                         Provider    string       `json:"provider"`
+                        Model       string       `json:"model"`
                         FileContent string       `json:"fileContent"`
                         FilePath    string       `json:"filePath"`
                         History     []ai.Message `json:"history"`
@@ -311,7 +313,7 @@ func runServe() {
                         return
                 }
 
-                response, err := ai.Chat(req.Provider, req.FileContent, req.FilePath, req.History, req.Prompt)
+                response, err := ai.Chat(req.Provider, req.Model, req.FileContent, req.FilePath, req.History, req.Prompt)
                 if err != nil {
                         http.Error(w, err.Error(), http.StatusInternalServerError)
                         return
