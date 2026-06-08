@@ -175,6 +175,20 @@ func (p *GoParser) extractReferences(f *ast.File, sym *models.Symbol) []models.R
 							p.collectTypeRefs(field.Type, refType, addRef)
 						}
 					}
+
+					// Function Calls inside the body
+					if d.Body != nil {
+						ast.Inspect(d.Body, func(n ast.Node) bool {
+							if call, ok := n.(*ast.CallExpr); ok {
+								if ident, ok := call.Fun.(*ast.Ident); ok {
+									addRef(ident.Name, models.RefCall)
+								} else if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+									addRef(sel.Sel.Name, models.RefCall)
+								}
+							}
+							return true
+						})
+					}
 				}
 			}
 		case *ast.GenDecl:

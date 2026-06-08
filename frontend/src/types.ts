@@ -24,6 +24,7 @@ export interface LearningStep {
   Unlocks: string[];
   Score: number;
   Slice: FileSlice;
+  CallGraph: Record<string, string[]>;
 }
 
 export interface Analysis {

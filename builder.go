@@ -1342,6 +1342,25 @@ func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
 			}
 		}
 
+		callGraph := make(map[string][]string)
+		for _, sym := range f.Symbols {
+			if sym.Kind == models.FunctionSymbol || sym.Kind == models.MethodSymbol {
+				var calls []string
+				seenCalls := make(map[string]bool)
+				for _, ref := range sym.References {
+					if ref.Type == models.RefCall {
+						if !seenCalls[ref.Name] {
+							calls = append(calls, ref.Name)
+							seenCalls[ref.Name] = true
+						}
+					}
+				}
+				if len(calls) > 0 {
+					callGraph[sym.Name] = calls
+				}
+			}
+		}
+
 		steps = append(steps, models.LearningStep{
 			Order:             i + 1,
 			File:              f.Path,
@@ -1351,6 +1370,7 @@ func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
 			Unlocks:           unlocks,
 			Score:             float64(f.Score),
 			Slice:             fileSlice,
+			CallGraph:         callGraph,
 		})
 	}
 

@@ -40,4 +40,5 @@ type LearningStep struct {
 	Unlocks           []string
 	Score             float64
 	Slice             FileSlice
+	CallGraph         map[string][]string
 }

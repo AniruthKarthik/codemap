@@ -5,6 +5,37 @@ import type { Analysis, ChatMessage } from './types'
 import Prism from 'prismjs'
 import 'prismjs/components/prism-go'
 import ReactMarkdown from 'react-markdown'
+import mermaid from 'mermaid'
+
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  themeVariables: {
+    fontFamily: 'var(--font-sans)',
+    primaryColor: '#ffffff',
+    primaryBorderColor: '#e0e0e0',
+    primaryTextColor: '#1d1d1f',
+    lineColor: '#0071e3',
+  }
+})
+
+function MermaidChart({ chart }: { chart: string }) {
+  const chartRef = useRef<HTMLDivElement>(null)
+  
+  useEffect(() => {
+    if (chartRef.current && chart) {
+      mermaid.render(`mermaid-${Math.random().toString(36).substring(2)}`, chart).then(res => {
+        if (chartRef.current) {
+          chartRef.current.innerHTML = res.svg
+        }
+      }).catch(err => {
+        console.error("Mermaid error:", err)
+      })
+    }
+  }, [chart])
+  
+  return <div ref={chartRef} style={{ overflowX: 'auto', display: 'flex', justifyContent: 'center' }} />
+}
 
 const API_BASE = 'http://localhost:8080'
 
@@ -584,6 +615,21 @@ function App() {
                     → {u}
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Control Flow Graph */}
+          {selectedStep?.CallGraph && Object.keys(selectedStep.CallGraph).length > 0 && (
+            <div className="context-section" style={{marginBottom: 0}}>
+              <h3>Control Flow Graph</h3>
+              <div style={{ background: '#fafafa', borderRadius: '8px', padding: '16px', border: '1px solid var(--border-color)', marginTop: '8px' }}>
+                <MermaidChart chart={[
+                  "graph TD",
+                  ...Object.entries(selectedStep.CallGraph).flatMap(([caller, targets]) => 
+                    targets.map(t => `    ${caller.replace(/[^a-zA-Z0-9_]/g, '_')}["${caller}"] --> ${t.replace(/[^a-zA-Z0-9_]/g, '_')}["${t}"]`)
+                  )
+                ].join('\n')} />
               </div>
             </div>
           )}
