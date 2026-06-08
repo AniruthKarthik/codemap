@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -228,4 +229,78 @@ func (ed *EntrypointDetector) Find(repo *models.Repository) []string {
 		}
 	}
 	return entrypoints
+}
+
+// Ranker calculates importance scores for files and sorts them.
+type Ranker struct{}
+
+// Rank assigns a score to each file in the repository and sorts repo.Files by score descending.
+func (r *Ranker) Rank(repo *models.Repository) {
+	if len(repo.Files) == 0 {
+		return
+	}
+
+	// 1. Resolve import paths for each file and count package imports
+	paths := make([]string, 0, len(repo.Files))
+	for _, f := range repo.Files {
+		paths = append(paths, f.Path)
+	}
+	root := findCommonRoot(paths)
+	moduleName := getModuleName(root)
+
+	// Map of file path to its resolved package import path
+	fileToPkgPath := make(map[string]string)
+	// Map of package import path to count of files importing it
+	packageImportCount := make(map[string]int)
+
+	for _, f := range repo.Files {
+		relPath, _ := filepath.Rel(root, f.Path)
+		dir := filepath.Dir(relPath)
+		var pkgPath string
+		if dir == "." {
+			pkgPath = moduleName
+		} else {
+			pkgPath = filepath.Join(moduleName, dir)
+		}
+		pkgPath = filepath.ToSlash(pkgPath)
+		fileToPkgPath[f.Path] = pkgPath
+
+		for _, imp := range f.Imports {
+			packageImportCount[imp]++
+		}
+	}
+
+	// 2. Score each file
+	for _, f := range repo.Files {
+		var score int64
+
+		// +100 contains main()
+		for _, fn := range f.Functions {
+			if fn.Name == "main" && f.Package == "package main" {
+				score += 100
+				break
+			}
+		}
+
+		// +20 exported functions
+		for _, fn := range f.Functions {
+			if fn.Exported {
+				score += 20
+			}
+		}
+
+		// +10 import count
+		score += int64(len(f.Imports)) * 10
+
+		// +15 imported by others
+		pkgPath := fileToPkgPath[f.Path]
+		score += int64(packageImportCount[pkgPath]) * 15
+
+		f.Score = score
+	}
+
+	// 3. Sort files by score descending
+	sort.Slice(repo.Files, func(i, j int) bool {
+		return repo.Files[i].Score > repo.Files[j].Score
+	})
 }

@@ -166,3 +166,67 @@ func TestEntrypointDetector(t *testing.T) {
 		t.Errorf("did not find expected entrypoints: main.go=%v, app.go=%v", foundMain, foundApp)
 	}
 }
+
+func TestRanker(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "ranker_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	moduleName := "example.com/rankrepo"
+	files := map[string]string{
+		"go.mod":  "module " + moduleName + "\n\ngo 1.25",
+		"main.go": "package main\n\nimport \"" + moduleName + "/lib\"\n\nfunc main() { lib.Helper() }",
+		"lib/util.go": "package lib\n\nimport \"fmt\"\n\nfunc Helper() { fmt.Println(\"hi\") }\nfunc Exported() {}",
+	}
+
+	for path, content := range files {
+		fullPath := filepath.Join(tmpDir, path)
+		err := os.MkdirAll(filepath.Dir(fullPath), 0755)
+		if err != nil {
+			t.Fatalf("Failed to create dir: %v", err)
+		}
+		err = os.WriteFile(fullPath, []byte(content), 0644)
+		if err != nil {
+			t.Fatalf("Failed to write file: %v", err)
+		}
+	}
+
+	repo, err := BuildRepository(tmpDir)
+	if err != nil {
+		t.Fatalf("BuildRepository failed: %v", err)
+	}
+
+	ranker := &Ranker{}
+	ranker.Rank(repo)
+
+	// main.go:
+	// +100 (main)
+	// +0 (0 exported)
+	// +10 (1 import)
+	// +0 (imported by 0)
+	// Total: 110
+
+	// lib/util.go:
+	// +0 (no main)
+	// +40 (2 exported: Helper, Exported)
+	// +10 (1 import: fmt)
+	// +15 (imported by main.go)
+	// Total: 65
+
+	if len(repo.Files) != 2 {
+		t.Fatalf("expected 2 files, got %d", len(repo.Files))
+	}
+
+	if repo.Files[0].Score != 110 {
+		t.Errorf("expected first file (main.go) score 110, got %d", repo.Files[0].Score)
+	}
+	if repo.Files[1].Score != 65 {
+		t.Errorf("expected second file (util.go) score 65, got %d", repo.Files[1].Score)
+	}
+
+	if !strings.HasSuffix(repo.Files[0].Path, "main.go") {
+		t.Errorf("expected first file to be main.go, got %s", repo.Files[0].Path)
+	}
+}
