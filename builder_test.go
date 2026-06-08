@@ -326,7 +326,7 @@ func TestGenerator(t *testing.T) {
 		t.Errorf("expected first file main.go (highest score), got %s", steps[0].File)
 	}
 
-	if steps[0].Purpose != "Application entrypoint." {
-		t.Errorf("expected purpose 'Application entrypoint.', got %s", steps[0].Purpose)
+	if steps[0].Purpose != "" {
+		t.Errorf("expected purpose '', got %s", steps[0].Purpose)
 	}
 }

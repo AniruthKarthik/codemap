@@ -23,3 +23,8 @@ export interface Analysis {
   repository: string;
   steps: LearningStep[];
 }
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}

@@ -12,7 +12,9 @@ import (
         "strings"
 
         "github.com/AniruthKarthik/codemap"
+        "github.com/AniruthKarthik/codemap/internal/ai"
         "github.com/AniruthKarthik/codemap/internal/models"
+        "github.com/joho/godotenv"
 )
 
 func main() {
@@ -102,6 +104,8 @@ func main() {
 }
 
 func runServe() {
+        godotenv.Load() // Ignore error, as .env might not exist
+        
         serveFs := flag.NewFlagSet("serve", flag.ExitOnError)
         port := serveFs.String("port", "8080", "Port to run the server on")
 
@@ -240,6 +244,60 @@ func runServe() {
                 }
                 w.Header().Set("Content-Type", "text/plain")
                 w.Write(content)
+        }))
+
+        // API: AI Generate Context
+        http.HandleFunc("/api/ai/generate", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+                if r.Method != "POST" {
+                        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+                        return
+                }
+                var req struct {
+                        Provider    string `json:"provider"`
+                        FileContent string `json:"fileContent"`
+                        FilePath    string `json:"filePath"`
+                }
+                if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                        http.Error(w, err.Error(), http.StatusBadRequest)
+                        return
+                }
+
+                res, err := ai.GenerateContext(req.Provider, req.FileContent, req.FilePath)
+                if err != nil {
+                        http.Error(w, err.Error(), http.StatusInternalServerError)
+                        return
+                }
+
+                w.Header().Set("Content-Type", "application/json")
+                json.NewEncoder(w).Encode(res)
+        }))
+
+        // API: AI Chat
+        http.HandleFunc("/api/ai/chat", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+                if r.Method != "POST" {
+                        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+                        return
+                }
+                var req struct {
+                        Provider    string       `json:"provider"`
+                        FileContent string       `json:"fileContent"`
+                        FilePath    string       `json:"filePath"`
+                        History     []ai.Message `json:"history"`
+                        Prompt      string       `json:"prompt"`
+                }
+                if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                        http.Error(w, err.Error(), http.StatusBadRequest)
+                        return
+                }
+
+                response, err := ai.Chat(req.Provider, req.FileContent, req.FilePath, req.History, req.Prompt)
+                if err != nil {
+                        http.Error(w, err.Error(), http.StatusInternalServerError)
+                        return
+                }
+
+                w.Header().Set("Content-Type", "application/json")
+                json.NewEncoder(w).Encode(map[string]string{"response": response})
         }))
 
         log.Fatal(http.ListenAndServe(":"+*port, nil))

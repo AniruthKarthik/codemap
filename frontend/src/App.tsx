@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import './App.css'
-import type { Analysis } from './types'
+import type { Analysis, ChatMessage } from './types'
 import Prism from 'prismjs'
 import 'prismjs/components/prism-go'
 
@@ -13,6 +13,8 @@ interface BrowserEntry {
   path: string
 }
 
+const PROVIDERS = ['Gemini', 'OpenAI', 'Anthropic', 'Groq', 'Ollama (Local)']
+
 function App() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null)
   const [selectedStepIndex, setSelectedStepIndex] = useState(0)
@@ -20,11 +22,32 @@ function App() {
   const [expandedGaps, setExpandedGaps] = useState<Set<number>>(new Set())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  
+  // File Browser State
   const [isPickingFolder, setIsPickingFolder] = useState(false)
   const [browserPath, setBrowserPath] = useState<string>('')
   const [browserEntries, setBrowserEntries] = useState<BrowserEntry[]>([])
 
-  // Initial load: get home dir for browser
+  // Layout State
+  const [leftWidth, setLeftWidth] = useState(300)
+  const [rightWidth, setRightWidth] = useState(450)
+  const isDraggingLeft = useRef(false)
+  const isDraggingRight = useRef(false)
+
+  // AI State
+  const [provider, setProvider] = useState<string>(() => localStorage.getItem('ai_provider') || 'Gemini')
+  const [aiContexts, setAiContexts] = useState<Record<string, {purpose: string, objective: string}>>({})
+  const [chatHistories, setChatHistories] = useState<Record<string, ChatMessage[]>>({})
+  const [chatInput, setChatInput] = useState('')
+  const [generatingContext, setGeneratingContext] = useState(false)
+  const [sendingChat, setSendingChat] = useState(false)
+
+  const chatHistoryRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    localStorage.setItem('ai_provider', provider)
+  }, [provider])
+
   useEffect(() => {
     fetch(`${API_BASE}/api/home`)
       .then(res => res.text())
@@ -32,7 +55,6 @@ function App() {
       .catch(err => console.error('Failed to get home dir:', err))
   }, [])
 
-  // Browser navigation
   useEffect(() => {
     if (isPickingFolder && browserPath) {
       fetch(`${API_BASE}/api/ls?path=${encodeURIComponent(browserPath)}`)
@@ -42,10 +64,33 @@ function App() {
     }
   }, [isPickingFolder, browserPath])
 
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isDraggingLeft.current) {
+        setLeftWidth(e.clientX)
+      } else if (isDraggingRight.current) {
+        setRightWidth(window.innerWidth - e.clientX)
+      }
+    }
+    const handleMouseUp = () => {
+      isDraggingLeft.current = false
+      isDraggingRight.current = false
+      document.body.style.cursor = 'default'
+    }
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [])
+
   const analyzePath = (path: string) => {
     setLoading(true)
     setError(null)
     setIsPickingFolder(false)
+    setAiContexts({})
+    setChatHistories({})
     
     fetch(`${API_BASE}/api/analysis?path=${encodeURIComponent(path)}`)
       .then(res => {
@@ -80,6 +125,12 @@ function App() {
     }
   }, [analysis, selectedStepIndex])
 
+  useEffect(() => {
+    if (chatHistoryRef.current) {
+      chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight
+    }
+  }, [chatHistories, selectedStepIndex, sendingChat])
+
   const toggleGap = (gapIndex: number) => {
     const newGaps = new Set(expandedGaps)
     if (newGaps.has(gapIndex)) {
@@ -88,6 +139,73 @@ function App() {
       newGaps.add(gapIndex)
     }
     setExpandedGaps(newGaps)
+  }
+
+  const selectedStep = analysis?.steps[selectedStepIndex]
+  const currentFile = selectedStep?.File || ''
+
+  const handleGenerateContext = async () => {
+    if (!currentFile || !fileContent) return
+    setGeneratingContext(true)
+    try {
+      const res = await fetch(`${API_BASE}/api/ai/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          fileContent,
+          filePath: currentFile
+        })
+      })
+      if (!res.ok) throw new Error(await res.text())
+      const data = await res.json()
+      setAiContexts(prev => ({ ...prev, [currentFile]: data }))
+    } catch (e: any) {
+      alert(`AI Generation Failed: ${e.message}`)
+    } finally {
+      setGeneratingContext(false)
+    }
+  }
+
+  const handleSendChat = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!chatInput.trim() || !currentFile || !fileContent || sendingChat) return
+
+    const prompt = chatInput.trim()
+    setChatInput('')
+    setSendingChat(true)
+
+    const currentHistory = chatHistories[currentFile] || []
+    const updatedHistory: ChatMessage[] = [...currentHistory, { role: 'user', content: prompt }]
+    setChatHistories(prev => ({ ...prev, [currentFile]: updatedHistory }))
+
+    try {
+      const res = await fetch(`${API_BASE}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          fileContent,
+          filePath: currentFile,
+          history: currentHistory,
+          prompt
+        })
+      })
+      if (!res.ok) throw new Error(await res.text())
+      const data = await res.json()
+      
+      setChatHistories(prev => ({
+        ...prev,
+        [currentFile]: [...updatedHistory, { role: 'assistant', content: data.response }]
+      }))
+    } catch (e: any) {
+      setChatHistories(prev => ({
+        ...prev,
+        [currentFile]: [...updatedHistory, { role: 'assistant', content: `Error: ${e.message}` }]
+      }))
+    } finally {
+      setSendingChat(false)
+    }
   }
 
   const renderCode = () => {
@@ -102,8 +220,7 @@ function App() {
     const addGap = (start: number, end: number, idx: number) => {
       const gapSize = end - start + 1
       const gapIdx = idx
-
-      // If the gap is just 1 line, just show it subtly instead of a button
+      
       if (gapSize === 1) {
         elements.push(
           <div key={`line-${start}`} className="code-line line-hidden">
@@ -116,11 +233,7 @@ function App() {
 
       if (expandedGaps.has(gapIdx)) {
         elements.push(
-          <div 
-            key={`gap-header-${gapIdx}`} 
-            className="expand-button" 
-            onClick={() => toggleGap(gapIdx)}
-          >
+          <div key={`gap-header-${gapIdx}`} className="expand-button" onClick={() => toggleGap(gapIdx)}>
             ▲ Hide {gapSize} implementation lines
           </div>
         )
@@ -134,11 +247,7 @@ function App() {
         }
       } else {
         elements.push(
-          <div 
-            key={`gap-${gapIdx}`} 
-            className="expand-button" 
-            onClick={() => toggleGap(gapIdx)}
-          >
+          <div key={`gap-${gapIdx}`} className="expand-button" onClick={() => toggleGap(gapIdx)}>
             ▼ Show {gapSize} hidden lines
           </div>
         )
@@ -167,7 +276,6 @@ function App() {
     return elements
   }
 
-  // Welcome Screen
   if (!analysis && !loading && !isPickingFolder) {
     return (
       <div className="welcome-screen">
@@ -183,7 +291,6 @@ function App() {
     )
   }
 
-  // Folder Picker Modal
   const renderFolderPicker = () => (
     <div className="browser-overlay" onClick={() => setIsPickingFolder(false)}>
       <div className="browser-modal" onClick={e => e.stopPropagation()}>
@@ -217,20 +324,19 @@ function App() {
 
   if (loading) return <div className="full-screen-message">Analyzing repository...</div>
   
-  const selectedStep = analysis?.steps[selectedStepIndex]
+  const aiCtx = aiContexts[currentFile]
+  const currentHistory = chatHistories[currentFile] || []
 
   return (
-    <div className="app-container">
+    <div className="app-container" style={{ gridTemplateColumns: `${leftWidth}px 1fr ${rightWidth}px` }}>
       {isPickingFolder && renderFolderPicker()}
       
-      <div className="pane sidebar">
+      <div className="pane sidebar" style={{ width: leftWidth }}>
         <div className="sidebar-header" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-          <span>Codemap: {analysis?.repository}</span>
-          <button 
-            className="secondary-button" 
-            style={{padding: '4px 8px', fontSize: '11px'}}
-            onClick={() => setIsPickingFolder(true)}
-          >
+          <span style={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '10px'}}>
+            Codemap: {analysis?.repository}
+          </span>
+          <button className="secondary-button" style={{padding: '4px 8px', fontSize: '11px', flexShrink: 0}} onClick={() => setIsPickingFolder(true)}>
             Change
           </button>
         </div>
@@ -242,54 +348,113 @@ function App() {
               onClick={() => setSelectedStepIndex(idx)}
             >
               <strong>{idx + 1}. {step.File.split('/').pop()}</strong>
-              <span className="item-path">{step.File.replace(new RegExp(`.*${analysis.repository}/`), '')}</span>
+              <span className="item-path">{step.File.replace(new RegExp(`.*${analysis?.repository}/`), '')}</span>
             </li>
           ))}
         </ul>
       </div>
 
-      <div className="pane code-viewer-container">
+      <div 
+        className="resizer" 
+        onMouseDown={() => { isDraggingLeft.current = true; document.body.style.cursor = 'col-resize' }} 
+      />
+
+      <div className="pane code-viewer-container" style={{ flex: 1 }}>
         <div className="code-viewer">
           {renderCode()}
         </div>
       </div>
 
-      <div className="pane context-pane">
-        <div className="context-header">File Context</div>
-        {selectedStep && (
-          <>
-            <div className="context-section">
-              <h3>Purpose</h3>
-              <div className="context-content">{selectedStep.Purpose}</div>
-            </div>
-            <div className="context-section">
-              <h3>Learning Objective</h3>
-              <div className="context-content">{selectedStep.LearningObjective}</div>
-            </div>
-            {selectedStep.KeySymbols.length > 0 && (
-              <div className="context-section">
-                <h3>Key Symbols</h3>
-                <div className="context-content">
-                  {selectedStep.KeySymbols.map(sym => (
-                    <span key={sym} className="symbol-tag">{sym}</span>
-                  ))}
-                </div>
+      <div 
+        className="resizer" 
+        onMouseDown={() => { isDraggingRight.current = true; document.body.style.cursor = 'col-resize' }} 
+      />
+
+      <div className="pane context-pane" style={{ width: rightWidth }}>
+        <div className="context-header">
+          <h2 style={{margin: 0, fontSize: '16px'}}>AI Assistant</h2>
+          <select 
+            className="model-select" 
+            value={provider} 
+            onChange={e => setProvider(e.target.value)}
+          >
+            {PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+        
+        <div className="context-body">
+          {/* Static Unlocks / Symbols */}
+          {selectedStep && selectedStep.Unlocks.length > 0 && (
+            <div className="context-section" style={{marginBottom: 0}}>
+              <h3>Unlocks</h3>
+              <div className="context-content">
+                {selectedStep.Unlocks.map(u => (
+                  <div key={u} style={{margin: '4px 0', fontSize: '13px', color: 'var(--accent-color)', fontWeight: 500}}>
+                    → {u}
+                  </div>
+                ))}
               </div>
-            )}
-            {selectedStep.Unlocks.length > 0 && (
-              <div className="context-section">
-                <h3>Unlocks</h3>
-                <div className="context-content">
-                  {selectedStep.Unlocks.map(u => (
-                    <div key={u} style={{margin: '4px 0', fontSize: '14px', color: 'var(--accent-color)', fontWeight: 500}}>
-                      → {u}
-                    </div>
-                  ))}
+            </div>
+          )}
+
+          {/* AI Context Generation */}
+          <div className="context-section" style={{marginBottom: 0}}>
+            {aiCtx ? (
+              <>
+                <div style={{marginBottom: '16px'}}>
+                  <h3>Purpose</h3>
+                  <div className="context-content">{aiCtx.purpose}</div>
                 </div>
-              </div>
+                <div>
+                  <h3>Learning Objective</h3>
+                  <div className="context-content">{aiCtx.objective}</div>
+                </div>
+              </>
+            ) : (
+              <button 
+                className="ai-generate-btn" 
+                onClick={handleGenerateContext}
+                disabled={generatingContext}
+              >
+                {generatingContext ? 'Analyzing File...' : '✨ Generate AI Context'}
+              </button>
             )}
-          </>
-        )}
+          </div>
+
+          {/* Chat Interface */}
+          <div className="chat-container">
+            <div className="chat-history" ref={chatHistoryRef}>
+              {currentHistory.length === 0 && (
+                <div style={{color: 'var(--text-secondary)', textAlign: 'center', margin: 'auto', fontSize: '13px'}}>
+                  Ask a question about this file.
+                </div>
+              )}
+              {currentHistory.map((msg, i) => (
+                <div key={i} className={`chat-message ${msg.role}`}>
+                  {msg.content}
+                </div>
+              ))}
+              {sendingChat && (
+                <div className="chat-message assistant" style={{opacity: 0.7}}>
+                  Thinking...
+                </div>
+              )}
+            </div>
+            <form className="chat-input-area" onSubmit={handleSendChat}>
+              <input 
+                type="text" 
+                className="chat-input" 
+                placeholder="Ask about this file..." 
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                disabled={sendingChat}
+              />
+              <button type="submit" className="chat-submit" disabled={sendingChat || !chatInput.trim()}>
+                Send
+              </button>
+            </form>
+          </div>
+        </div>
       </div>
     </div>
   )
