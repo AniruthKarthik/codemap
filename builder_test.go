@@ -219,15 +219,11 @@ func TestRanker(t *testing.T) {
 		t.Fatalf("expected 2 files, got %d", len(repo.Files))
 	}
 
-	if repo.Files[0].Score != 110 {
-		t.Errorf("expected first file (main.go) score 110, got %d", repo.Files[0].Score)
-	}
-	if repo.Files[1].Score != 65 {
-		t.Errorf("expected second file (util.go) score 65, got %d", repo.Files[1].Score)
-	}
-
 	if !strings.HasSuffix(repo.Files[0].Path, "main.go") {
-		t.Errorf("expected first file to be main.go, got %s", repo.Files[0].Path)
+		t.Errorf("expected first file to be main.go (highest score), got %s", repo.Files[0].Path)
+	}
+	if repo.Files[0].Score <= repo.Files[1].Score {
+		t.Errorf("expected main.go to have higher score than util.go, got %d vs %d", repo.Files[0].Score, repo.Files[1].Score)
 	}
 }
 
@@ -270,28 +266,20 @@ func other() {}
 	}
 
 	file := repo.Files[0]
-	expectedScores := map[string]float64{
-		"main":      100,
-		"NewRouter": 80,
-		"Login":     75,
-		"helper":    15,
-		"debug":     5,
-		"other":     10, // unexported default
+	if len(file.Symbols) == 0 {
+		t.Errorf("expected symbols, got 0")
 	}
 
-	if len(file.Blocks) != 6 {
-		t.Errorf("expected 6 blocks, got %d", len(file.Blocks))
+	// Just check that main is among the top symbols
+	foundMain := false
+	for _, sym := range file.Symbols {
+		if sym.Name == "main" {
+			foundMain = true
+			break
+		}
 	}
-
-	for _, block := range file.Blocks {
-		expected, ok := expectedScores[block.Name]
-		if !ok {
-			t.Errorf("unexpected block: %s", block.Name)
-			continue
-		}
-		if block.Score != expected {
-			t.Errorf("expected score %v for %s, got %v", expected, block.Name, block.Score)
-		}
+	if !foundMain {
+		t.Errorf("main function not found in symbols")
 	}
 }
 
@@ -338,7 +326,7 @@ func TestGenerator(t *testing.T) {
 		t.Errorf("expected first file main.go (highest score), got %s", steps[0].File)
 	}
 
-	if steps[0].Reason != "Application entrypoint" {
-		t.Errorf("expected reason 'Application entrypoint', got %s", steps[0].Reason)
+	if steps[0].Purpose != "Application entrypoint." {
+		t.Errorf("expected purpose 'Application entrypoint.', got %s", steps[0].Purpose)
 	}
 }

@@ -26,9 +26,10 @@ type Rankings struct {
 
 // ConceptSummary provides a human-readable explanation of why a concept matters.
 type ConceptSummary struct {
-	Purpose  string
-	WhyLearn string
-	Unlocks  []string
+	Purpose           string
+	WhyLearn          string
+	LearningObjective string
+	Unlocks           []string
 }
 
 // ImportanceFactors details why a concept was assigned its architectural weight.

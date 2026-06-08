@@ -509,8 +509,9 @@ func (cd *ConceptDetector) Detect(repo *models.Repository) ([]models.Concept, []
 		}
 		// Summary Generation (Heuristic)
 		c.Summary = models.ConceptSummary{
-			Purpose:  fmt.Sprintf("Handles %s functionality.", c.Name),
-			WhyLearn: "Key part of the system's architecture.",
+			Purpose:           fmt.Sprintf("Handles %s functionality.", c.Name),
+			WhyLearn:          "Key part of the system's architecture.",
+			LearningObjective: fmt.Sprintf("Understand how %s is implemented and how it interacts with its dependencies.", c.Name),
 		}
 		if c.Role == models.RoleFoundational {
 			c.Summary.WhyLearn = "This is a foundational element that many other features build upon."
@@ -1073,7 +1074,8 @@ func (g *Generator) GenerateUnits(repo *models.Repository) []models.LearningUnit
 			Name:                    c.Name,
 			SymbolIDs:               c.SymbolIDs,
 			PrerequisiteIDs:         c.PrerequisiteIDs,
-			Reason:                  c.Summary.WhyLearn,
+			Purpose:                 c.Summary.Purpose,
+			LearningObjective:       c.Summary.LearningObjective,
 			EstimatedTimeMinutes:    time,
 			KnowledgeGainPercentage: gain,
 			Coverage:                coverage,
@@ -1177,7 +1179,7 @@ func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
 	steps := make([]models.LearningStep, 0, len(repo.Files))
 
 	for i, f := range repo.Files {
-		reason := ""
+		var purpose, learningObjective string
 
 		// Determine reason based on role and primary symbol
 		// For Core Domain, prefer Struct/Interface as primary symbol name
@@ -1196,41 +1198,55 @@ func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
 
 		switch f.Role {
 		case models.RoleEntrypoint:
-			reason = "Application entrypoint."
+			purpose = "Application entrypoint."
+			learningObjective = "Observe how the application initializes and which components it connects."
 		case models.RoleCoreDomain:
 			if primarySymbol != nil {
-				reason = fmt.Sprintf("Defines the core %s abstraction.", primarySymbol.Name)
+				purpose = fmt.Sprintf("Defines the core %s abstraction.", primarySymbol.Name)
+				learningObjective = fmt.Sprintf("Understand the data structures and methods that define %s.", primarySymbol.Name)
 			} else {
-				reason = "Core domain logic and models."
+				purpose = "Core domain logic and models."
+				learningObjective = "Learn about the primary business logic and data representations."
 			}
 		case models.RoleExecution:
 			if primarySymbol != nil {
 				if primarySymbol.Kind == models.StructSymbol || primarySymbol.Kind == models.InterfaceSymbol {
-					reason = fmt.Sprintf("Executes using the %s engine.", primarySymbol.Name)
+					purpose = fmt.Sprintf("Executes using the %s engine.", primarySymbol.Name)
 				} else {
-					reason = fmt.Sprintf("Handles execution of %s.", primarySymbol.Name)
+					purpose = fmt.Sprintf("Handles execution of %s.", primarySymbol.Name)
 				}
+				learningObjective = fmt.Sprintf("Analyze the control flow and state management within %s.", primarySymbol.Name)
 			} else {
-				reason = "Execution engine and workflow logic."
+				purpose = "Execution engine and workflow logic."
+				learningObjective = "Understand how the system orchestrates complex tasks."
 			}
 		case models.RoleAgent:
-			reason = "Implements agent-based logic."
+			purpose = "Implements agent-based logic."
+			learningObjective = "Learn how the system makes autonomous decisions and performs actions."
 		case models.RoleProvider:
-			reason = "Connects to external service providers."
+			purpose = "Connects to external service providers."
+			learningObjective = "Understand the integration points and how external data is adapted."
 		case models.RolePersistence:
-			reason = "Handles data persistence and storage."
+			purpose = "Handles data persistence and storage."
+			learningObjective = "Learn how the system saves and retrieves data from the database or filesystem."
 		case models.RoleInfrastructure:
-			reason = "Infrastructure and system-level configuration."
+			purpose = "Infrastructure and system-level configuration."
+			learningObjective = "Understand the underlying environment setup and resource management."
 		case models.RoleUtility:
-			reason = "Utility functions and common helpers."
+			purpose = "Utility functions and common helpers."
+			learningObjective = "Familiarize yourself with common tools used across the codebase."
 		case models.RoleConfig:
-			reason = "Application configuration and settings."
+			purpose = "Application configuration and settings."
+			learningObjective = "Understand how the system is tuned and configured via external parameters."
 		case models.RoleTest:
-			reason = "Test suite for system verification."
+			purpose = "Test suite for system verification."
+			learningObjective = "Learn how to verify system behavior through automated tests."
 		case models.RoleExample:
-			reason = "Example usage of the system."
+			purpose = "Example usage of the system."
+			learningObjective = "See how the API is intended to be used in practical scenarios."
 		default:
-			reason = "Supporting implementation detail."
+			purpose = "Supporting implementation detail."
+			learningObjective = "Understand how this file supports the broader system architecture."
 		}
 
 		// Extract important ranges for this file
@@ -1243,17 +1259,34 @@ func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
 			return f.Symbols[i].StartLine < f.Symbols[j].StartLine
 		})
 
+		// Determine the single most important symbol in the file for full display
+		var bestSymID string
+		maxScore := -1.0
+		for _, sym := range f.Symbols {
+			if sym.Score > maxScore {
+				maxScore = sym.Score
+				bestSymID = sym.ID
+			}
+		}
+
 		for _, sym := range f.Symbols {
 			// Refined importance logic
 			importanceLevel := 0 // 0: ignore, 1: signature only, 2: full
-			
+
 			if sym.Kind == models.StructSymbol || sym.Kind == models.InterfaceSymbol {
-				importanceLevel = 2 // Always show data structures fully
+				// Show data structures if they are somewhat relevant
+				if sym.Score > 400 || sym.ID == bestSymID {
+					importanceLevel = 2
+				} else {
+					importanceLevel = 1
+				}
 			} else if sym.Kind == models.FunctionSymbol || sym.Kind == models.MethodSymbol {
-				if sym.Score > 500 || (f.Role == models.RoleEntrypoint && sym.Name == "main") {
-					importanceLevel = 2 // High impact functions and main()
-				} else if sym.Score > 200 || strings.HasPrefix(sym.Name, "New") {
-					importanceLevel = 1 // Central APIs and Constructors (signatures only)
+				// Only show full body for the absolute best symbol (if it's very high score) or main
+				if (sym.ID == bestSymID && sym.Score > 2000) || (f.Role == models.RoleEntrypoint && sym.Name == "main") {
+					importanceLevel = 2
+				} else if sym.Score > 500 || strings.HasPrefix(sym.Name, "New") {
+					// Show signature for other important functions/constructors
+					importanceLevel = 1
 				}
 			}
 
@@ -1263,8 +1296,8 @@ func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
 					End:   sym.EndLine,
 				})
 			} else if importanceLevel == 1 {
-				// Show just the signature (first few lines to handle multi-line signatures)
-				end := sym.StartLine + 3
+				// Show just the signature (first few lines)
+				end := sym.StartLine + 2
 				if end > sym.EndLine {
 					end = sym.EndLine
 				}
@@ -1294,12 +1327,63 @@ func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
 			fileSlice.Ranges = merged
 		}
 
+		// Identify Key Symbols (Top 3 exported)
+		sort.Slice(f.Symbols, func(i, j int) bool {
+			return f.Symbols[i].Score > f.Symbols[j].Score
+		})
+		keySymbols := make([]string, 0)
+		for _, sym := range f.Symbols {
+			if len(sym.Name) > 0 && sym.Name[0] >= 'A' && sym.Name[0] <= 'Z' {
+				keySymbols = append(keySymbols, sym.Name)
+				if len(keySymbols) >= 3 {
+					break
+				}
+			}
+		}
+
+		// Identify Unlocks (Directly referenced files that appear later)
+		// This is a simplified version: just look at what this file imports/references
+		unlocks := make([]string, 0)
+		// We'll use the symbol reference graph to see what files are 'unlocked'
+		seenUnlocks := make(map[string]bool)
+		for _, sym := range f.Symbols {
+			for _, edge := range repo.SymbolEdges {
+				if edge.From == sym.ID {
+					// Find which file contains edge.To
+					for _, targetFile := range repo.Files {
+						for _, targetSym := range targetFile.Symbols {
+							if targetSym.ID == edge.To {
+								targetRel := filepath.Base(targetFile.Path)
+								if targetFile.Path != f.Path && !seenUnlocks[targetRel] {
+									unlocks = append(unlocks, targetRel)
+									seenUnlocks[targetRel] = true
+								}
+								break
+							}
+						}
+						if seenUnlocks[filepath.Base(targetFile.Path)] {
+							break
+						}
+					}
+				}
+				if len(unlocks) >= 3 {
+					break
+				}
+			}
+			if len(unlocks) >= 3 {
+				break
+			}
+		}
+
 		steps = append(steps, models.LearningStep{
-			Order:  i + 1,
-			File:   f.Path,
-			Reason: reason,
-			Score:  float64(f.Score),
-			Slice:  fileSlice,
+			Order:             i + 1,
+			File:              f.Path,
+			Purpose:           purpose,
+			LearningObjective: learningObjective,
+			KeySymbols:        keySymbols,
+			Unlocks:           unlocks,
+			Score:             float64(f.Score),
+			Slice:             fileSlice,
 		})
 	}
 

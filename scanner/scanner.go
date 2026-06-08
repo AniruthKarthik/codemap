@@ -36,6 +36,14 @@ func NewScanner(opts ...Option) *DefaultScanner {
 			".git":         {},
 			"vendor":       {},
 			"node_modules": {},
+			"testdata":      {},
+			"fixtures":      {},
+			".idea":        {},
+			".vscode":      {},
+			"dist":         {},
+			"bin":          {},
+			"gen":          {},
+			"generated":    {},
 		},
 	}
 

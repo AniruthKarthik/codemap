@@ -12,7 +12,8 @@ type LearningUnit struct {
 	// PrerequisiteIDs is a list of concepts that should be learned before this one.
 	PrerequisiteIDs []string
 
-	Reason string
+	Purpose           string
+	LearningObjective string
 
 	// EstimatedTimeMinutes is the approximate time to understand this unit.
 	EstimatedTimeMinutes int
@@ -31,9 +32,12 @@ type LearningUnit struct {
 
 // LearningStep is a legacy model for file-based paths (Phase 13).
 type LearningStep struct {
-	Order  int
-	File   string
-	Reason string
-	Score  float64
-	Slice  FileSlice
+	Order             int
+	File              string
+	Purpose           string
+	LearningObjective string
+	KeySymbols        []string
+	Unlocks           []string
+	Score             float64
+	Slice             FileSlice
 }
