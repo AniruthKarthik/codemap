@@ -479,8 +479,18 @@ function App() {
           <div className="context-section" style={{marginBottom: 0}}>
             {aiCtx ? (
               <>
+                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px'}}>
+                  <h3 style={{margin: 0}}>Purpose</h3>
+                  <button 
+                    className="secondary-button" 
+                    style={{padding: '4px 8px', fontSize: '11px', marginTop: '-4px'}}
+                    onClick={handleGenerateContext}
+                    disabled={generatingContext}
+                  >
+                    {generatingContext ? 'Retrying...' : '↻ Regenerate'}
+                  </button>
+                </div>
                 <div style={{marginBottom: '16px'}}>
-                  <h3>Purpose</h3>
                   <div className="context-content">{aiCtx.purpose}</div>
                 </div>
                 <div>

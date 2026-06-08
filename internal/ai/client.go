@@ -167,11 +167,16 @@ func GenerateContext(provider, model, content, path string) (*GenerateResponse, 
 		return nil, err
 	}
 
-	// Try to parse the response as JSON. Clean up markdown code blocks if necessary.
-	cleaned := strings.TrimPrefix(respText, "```json")
-	cleaned = strings.TrimPrefix(cleaned, "```")
-	cleaned = strings.TrimSuffix(cleaned, "```")
-	cleaned = strings.TrimSpace(cleaned)
+	// Aggressive JSON extraction: find first { and last }
+	startIdx := strings.Index(respText, "{")
+	endIdx := strings.LastIndex(respText, "}")
+	
+	var cleaned string
+	if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+		cleaned = respText[startIdx : endIdx+1]
+	} else {
+		cleaned = respText // Fallback to raw text if no braces found
+	}
 
 	var res GenerateResponse
 	err = json.Unmarshal([]byte(cleaned), &res)
