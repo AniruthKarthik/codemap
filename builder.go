@@ -581,7 +581,7 @@ func (c *Classifier) Classify(f *models.File) models.FileRole {
 		return models.RoleTest
 	}
 
-	// Check for common directories
+	// Check for common directories and file names
 	dirParts := strings.Split(path, string(filepath.Separator))
 	for _, part := range dirParts {
 		switch part {
@@ -593,7 +593,33 @@ func (c *Classifier) Classify(f *models.File) models.FileRole {
 			return models.RoleInfrastructure
 		case "generated", "gen":
 			return models.RoleGenerated
+		case "internal", "pkg", "core", "domain":
+			// These are hints but we need more specific classification
 		}
+	}
+
+	// Specific file name patterns
+	base := filepath.Base(path)
+	if strings.Contains(base, "config") || strings.Contains(base, "settings") {
+		return models.RoleConfig
+	}
+	if strings.Contains(base, "util") || strings.Contains(base, "helper") || base == "errors.go" || base == "constants.go" {
+		return models.RoleUtility
+	}
+	if strings.Contains(base, "model") || strings.Contains(base, "types") || base == "schema.go" {
+		return models.RoleCoreDomain
+	}
+	if strings.Contains(base, "executor") || strings.Contains(base, "workflow") || strings.Contains(base, "engine") || strings.Contains(base, "runner") {
+		return models.RoleExecution
+	}
+	if strings.Contains(base, "agent") {
+		return models.RoleAgent
+	}
+	if strings.Contains(base, "provider") || strings.Contains(base, "adapter") {
+		return models.RoleProvider
+	}
+	if strings.Contains(base, "store") || strings.Contains(base, "db") || strings.Contains(base, "repository") || strings.Contains(base, "persistence") {
+		return models.RolePersistence
 	}
 
 	// Entrypoint detection
@@ -602,8 +628,15 @@ func (c *Classifier) Classify(f *models.File) models.FileRole {
 			return models.RoleEntrypoint
 		}
 	}
+	if strings.Contains(path, "cmd/") && strings.HasSuffix(path, "main.go") {
+		return models.RoleEntrypoint
+	}
 
-	// Default to core logic for now
+	// Default to core domain for now if it contains many symbols
+	if len(f.Symbols) > 5 {
+		return models.RoleCoreDomain
+	}
+
 	return models.RoleCoreLogic
 }
 
@@ -719,11 +752,8 @@ type EntrypointDetector struct{}
 func (ed *EntrypointDetector) Find(repo *models.Repository) []string {
 	var entrypoints []string
 	for _, f := range repo.Files {
-		for _, fn := range f.Functions {
-			if fn.Name == "main" && f.Package == "package main" {
-				entrypoints = append(entrypoints, f.Path)
-				break
-			}
+		if f.Role == models.RoleEntrypoint {
+			entrypoints = append(entrypoints, f.Path)
 		}
 	}
 	return entrypoints
@@ -748,55 +778,33 @@ func (r *Ranker) Rank(repo *models.Repository) {
 			// Base score by kind
 			switch sym.Kind {
 			case models.StructSymbol:
-				sym.Score = 500 // Huge base score
+				sym.Score = 300 // Data structures are high
 			case models.InterfaceSymbol:
-				sym.Score = 600
+				sym.Score = 400 // Interfaces are higher
 			case models.FunctionSymbol, models.MethodSymbol:
-				sym.Score = 50
+				sym.Score = 200 // Behavior is important but usually tied to a struct
 			}
 
 			// Bonus for exported symbols
 			if len(sym.Name) > 0 && sym.Name[0] >= 'A' && sym.Name[0] <= 'Z' {
-				sym.Score += 20
-			}
-
-			// Boilerplate Penalties
-			boilerplate := map[string]bool{
-				"Len": true, "Less": true, "Swap": true, "String": true, "Error": true,
-			}
-			if boilerplate[sym.Name] {
-				sym.Score -= 40
+				sym.Score += 100
 			}
 		}
 	}
 
 	// 2. Apply Centrality (Incoming References with typed weights)
-	primitives := map[string]bool{
-		"string": true, "int": true, "int64": true, "bool": true, "error": true,
-		"interface{}": true, "any": true, "float64": true, "byte": true, "rune": true,
-	}
-
 	for _, edge := range repo.SymbolEdges {
-		if primitives[strings.ToLower(edge.To)] {
-			continue
-		}
 		if target, ok := idToSymbol[edge.To]; ok {
 			var weight float64
 			switch edge.Type {
+			case models.RefCall:
+				weight = 50 // Behavior call is very important
 			case models.RefImplement:
-				weight = 100
-			case models.RefEmbed:
-				weight = 80
-			case models.RefField:
-				weight = 50
+				weight = 40
 			case models.RefConstruct:
 				weight = 40
-			case models.RefReturn:
+			case models.RefField:
 				weight = 20
-			case models.RefParameter:
-				weight = 10
-			case models.RefCall:
-				weight = 10
 			default:
 				weight = 10
 			}
@@ -805,27 +813,24 @@ func (r *Ranker) Rank(repo *models.Repository) {
 		}
 	}
 
-	// 2.5 Entrypoint Reachability
-	// Find distance from entrypoint functions to all other symbols
+	// 3. Execution Flow Bonus (BFS from entrypoints)
 	distances := make(map[string]int)
 	queue := []string{}
-
-	// Identify entrypoint symbols
-	for _, f := range repo.Files {
-		if f.Role == models.RoleEntrypoint {
-			for _, sym := range f.Symbols {
-				if sym.Kind == models.FunctionSymbol && sym.Name == "main" {
-					distances[sym.ID] = 0
-					queue = append(queue, sym.ID)
-				}
-			}
-		}
-	}
 
 	// Adjacency list for BFS (From -> To)
 	adj := make(map[string][]string)
 	for _, edge := range repo.SymbolEdges {
 		adj[edge.From] = append(adj[edge.From], edge.To)
+	}
+
+	for _, f := range repo.Files {
+		if f.Role == models.RoleEntrypoint {
+			for _, sym := range f.Symbols {
+				// Any symbol in an entrypoint file can be a start for reachability
+				distances[sym.ID] = 0
+				queue = append(queue, sym.ID)
+			}
+		}
 	}
 
 	for len(queue) > 0 {
@@ -838,9 +843,9 @@ func (r *Ranker) Rank(repo *models.Repository) {
 				distances[neighbor] = dist + 1
 				queue = append(queue, neighbor)
 				
-				// Apply reachability bonus
 				if target, ok := idToSymbol[neighbor]; ok {
-					bonus := 100.0 / float64(dist+1)
+					// Massive reachability bonus to favor execution flow
+					bonus := 2000.0 / float64(dist+1)
 					target.Factors.Reachability += bonus
 					target.Score += bonus
 				}
@@ -848,72 +853,70 @@ func (r *Ranker) Rank(repo *models.Repository) {
 		}
 	}
 
-	// 3. Resolve import paths for each file and count package imports (for file-level context)
-	paths := make([]string, 0, len(repo.Files))
-	for _, f := range repo.Files {
-		paths = append(paths, f.Path)
-	}
-	root := findCommonRoot(paths)
-	moduleName := getModuleName(root)
-
-	packageImportCount := make(map[string]int)
-	for _, f := range repo.Files {
-		for _, imp := range f.Imports {
-			packageImportCount[imp]++
-		}
-	}
-
-	// 4. Score each file based on its symbols and role
+	// 4. File Level Scoring
 	for _, f := range repo.Files {
 		var score float64
+		var mentalModelScore float64
 
-		// File score is primarily the sum of its architectural symbols
+		// Sum top symbols' scores
+		sort.Slice(f.Symbols, func(i, j int) bool {
+			return f.Symbols[i].Score > f.Symbols[j].Score
+		})
+		
+		for i, sym := range f.Symbols {
+			// Diminishing returns for many small symbols in a file
+			if i < 5 {
+				score += sym.Score
+			} else {
+				score += sym.Score * 0.1
+			}
+		}
+
+		// Mental Model Scoring (Behavior vs Data)
+		behaviorCount := 0
+		dataCount := 0
 		for _, sym := range f.Symbols {
-			score += sym.Score
+			if sym.Kind == models.FunctionSymbol || sym.Kind == models.MethodSymbol {
+				behaviorCount++
+			} else {
+				dataCount++
+			}
 		}
-
-		// Entrypoint bonus (handled by role but let's keep it explicit for now)
-		if f.Role == models.RoleEntrypoint {
-			score += 100
+		
+		if behaviorCount > 0 && behaviorCount >= dataCount {
+			mentalModelScore += 1000 // Explains behavior
 		}
-
-		// Import context
-		relPath, _ := filepath.Rel(root, f.Path)
-		dir := filepath.Dir(relPath)
-		var pkgPath string
-		if dir == "." {
-			pkgPath = moduleName
-		} else {
-			pkgPath = filepath.Join(moduleName, dir)
-		}
-		pkgPath = filepath.ToSlash(pkgPath)
-		score += float64(packageImportCount[pkgPath]) * 15
-
-		// Apply role-based penalties
+		
+		// Role-based Layer Scoring
 		switch f.Role {
-		case models.RoleTest:
-			score = score * 0.1 // -90% penalty
-		case models.RoleExample, models.RoleGenerated:
-			score = score * 0.3 // -70% penalty
+		case models.RoleEntrypoint:
+			score += 20000 
+		case models.RoleCoreDomain:
+			score += 10000
+		case models.RoleExecution:
+			score += 8000
+		case models.RoleAgent:
+			score += 7000
+		case models.RoleProvider:
+			score += 6000
+		case models.RolePersistence:
+			score += 5000
 		case models.RoleInfrastructure:
-			score = score * 0.5 // -50% penalty
+			score += 4000
+		case models.RoleUtility:
+			score -= 5000 // Penalty
+		case models.RoleConfig:
+			score -= 8000 // Penalty
+		case models.RoleTest:
+			score -= 20000 // Heavy penalty
+		case models.RoleGenerated:
+			score -= 25000
 		}
 
-		f.Score = int64(score)
-
-		// 5. Update File.Blocks from symbols (replacing old function-only blocks)
-		f.Blocks = make([]models.CodeBlock, 0, len(f.Symbols))
-		for _, sym := range f.Symbols {
-			f.Blocks = append(f.Blocks, models.CodeBlock{
-				Name:      sym.Name,
-				StartLine: sym.StartLine,
-				EndLine:   sym.EndLine,
-				Score:     sym.Score,
-			})
-		}
+		f.Score = int64(score + mentalModelScore)
 	}
 
-	// 6. Sort files by score descending
+	// 5. Sort files by score descending
 	sort.Slice(repo.Files, func(i, j int) bool {
 		return repo.Files[i].Score > repo.Files[j].Score
 	})
@@ -1173,58 +1176,61 @@ func (g *Generator) extractSlice(repo *models.Repository, concept *models.Concep
 func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
 	steps := make([]models.LearningStep, 0, len(repo.Files))
 
-	// Map symbol ID to concept for better reasoning
-	symToConcept := make(map[string]*models.Concept)
-	for i := range repo.Concepts {
-		c := &repo.Concepts[i]
-		for _, symID := range c.SymbolIDs {
-			symToConcept[symID] = c
-		}
-	}
-
 	for i, f := range repo.Files {
-		reason := "Key repository component"
+		reason := ""
 
-		// Find the most important concept associated with this file
-		conceptCounts := make(map[string]float64)
+		// Determine reason based on role and primary symbol
+		// For Core Domain, prefer Struct/Interface as primary symbol name
+		var primarySymbol *models.Symbol
+		maxSymScore := -1.0
 		for _, sym := range f.Symbols {
-			if c, ok := symToConcept[sym.ID]; ok {
-				conceptCounts[c.ID] += c.Importance
+			effectiveScore := sym.Score
+			if sym.Kind == models.StructSymbol || sym.Kind == models.InterfaceSymbol {
+				effectiveScore *= 1.5 // Bias towards types for reasoning
+			}
+			if effectiveScore > maxSymScore {
+				primarySymbol = &sym
+				maxSymScore = effectiveScore
 			}
 		}
 
-		var bestConcept *models.Concept
-		maxImportance := -1.0
-		for id, importance := range conceptCounts {
-			if importance > maxImportance {
-				for j := range repo.Concepts {
-					if repo.Concepts[j].ID == id {
-						bestConcept = &repo.Concepts[j]
-						maxImportance = importance
-						break
-					}
+		switch f.Role {
+		case models.RoleEntrypoint:
+			reason = "Application entrypoint."
+		case models.RoleCoreDomain:
+			if primarySymbol != nil {
+				reason = fmt.Sprintf("Defines the core %s abstraction.", primarySymbol.Name)
+			} else {
+				reason = "Core domain logic and models."
+			}
+		case models.RoleExecution:
+			if primarySymbol != nil {
+				if primarySymbol.Kind == models.StructSymbol || primarySymbol.Kind == models.InterfaceSymbol {
+					reason = fmt.Sprintf("Executes using the %s engine.", primarySymbol.Name)
+				} else {
+					reason = fmt.Sprintf("Handles execution of %s.", primarySymbol.Name)
 				}
+			} else {
+				reason = "Execution engine and workflow logic."
 			}
-		}
-
-		if bestConcept != nil && bestConcept.Summary.Purpose != "" {
-			reason = bestConcept.Summary.Purpose
-		} else {
-			// Fallback to role-based reasoning
-			switch f.Role {
-			case models.RoleEntrypoint:
-				reason = "Application entrypoint"
-			case models.RoleCoreLogic:
-				reason = "Core business logic or utility"
-			case models.RoleInfrastructure:
-				reason = "Infrastructure or configuration"
-			case models.RoleTest:
-				reason = "Test suite for system verification"
-			case models.RoleExample:
-				reason = "Example usage of the system"
-			case models.RoleGenerated:
-				reason = "Generated code"
-			}
+		case models.RoleAgent:
+			reason = "Implements agent-based logic."
+		case models.RoleProvider:
+			reason = "Connects to external service providers."
+		case models.RolePersistence:
+			reason = "Handles data persistence and storage."
+		case models.RoleInfrastructure:
+			reason = "Infrastructure and system-level configuration."
+		case models.RoleUtility:
+			reason = "Utility functions and common helpers."
+		case models.RoleConfig:
+			reason = "Application configuration and settings."
+		case models.RoleTest:
+			reason = "Test suite for system verification."
+		case models.RoleExample:
+			reason = "Example usage of the system."
+		default:
+			reason = "Supporting implementation detail."
 		}
 
 		// Extract important ranges for this file
@@ -1244,9 +1250,9 @@ func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
 			if sym.Kind == models.StructSymbol || sym.Kind == models.InterfaceSymbol {
 				importanceLevel = 2 // Always show data structures fully
 			} else if sym.Kind == models.FunctionSymbol || sym.Kind == models.MethodSymbol {
-				if sym.Score > 300 || (f.Role == models.RoleEntrypoint && sym.Name == "main") {
+				if sym.Score > 500 || (f.Role == models.RoleEntrypoint && sym.Name == "main") {
 					importanceLevel = 2 // High impact functions and main()
-				} else if sym.Score > 50 || strings.HasPrefix(sym.Name, "New") {
+				} else if sym.Score > 200 || strings.HasPrefix(sym.Name, "New") {
 					importanceLevel = 1 // Central APIs and Constructors (signatures only)
 				}
 			}

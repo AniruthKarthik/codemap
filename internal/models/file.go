@@ -4,13 +4,18 @@ type FileRole string
 
 const (
 	RoleEntrypoint     FileRole = "entrypoint"
-	RoleCoreLogic      FileRole = "core_logic"
-	RoleInterface      FileRole = "interface"
+	RoleCoreDomain     FileRole = "core_domain"
+	RoleExecution      FileRole = "execution_engine"
+	RoleAgent          FileRole = "agent"
+	RoleProvider       FileRole = "provider"
+	RolePersistence    FileRole = "persistence"
 	RoleInfrastructure FileRole = "infrastructure"
+	RoleUtility        FileRole = "utility"
 	RoleTest           FileRole = "test"
 	RoleGenerated      FileRole = "generated"
 	RoleExample        FileRole = "example"
 	RoleConfig         FileRole = "config"
+	RoleCoreLogic      FileRole = "core_logic" // Keeping for backward compatibility
 )
 
 // File represents a Go source file and its extracted metadata.
