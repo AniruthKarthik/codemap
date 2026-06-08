@@ -55,6 +55,9 @@ type Symbol struct {
 
 	// Factors details the components of the symbol's score.
 	Factors ImportanceFactors
+
+	// Blocks represents classified code sections within the symbol.
+	Blocks []CodeBlock
 }
 
 // SymbolEdge represents a reference from one symbol to another.

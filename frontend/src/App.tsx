@@ -282,78 +282,177 @@ function App() {
     const highlightedLines = lines.map(line => Prism.highlight(line, Prism.languages.go, 'go'))
     const ranges = selectedStep?.Slice?.Ranges || []
     const elements: ReactNode[] = []
-    let currentLine = 1
-    const sortedRanges = [...ranges].sort((a, b) => a.Start - b.Start)
-
-    const addGap = (start: number, end: number, idx: number) => {
-      const gapSize = end - start + 1
-      const gapIdx = idx
-      
-      if (gapSize === 1) {
-        elements.push(
-          <div key={`line-${start}`} className="code-line line-hidden">
-            <div className="line-number">{start}</div>
-            <div className="line-content" dangerouslySetInnerHTML={{ __html: highlightedLines[start - 1] }} />
-          </div>
-        )
-        return
+    
+    const visibleLines = new Set<number>()
+    ranges.forEach(r => {
+      for (let i = r.Start; i <= r.End; i++) {
+        visibleLines.add(i)
       }
+    })
 
-      if (expandedGaps.has(gapIdx)) {
-        elements.push(
-          <div key={`gap-header-${gapIdx}`} className="expand-button" onClick={() => toggleGap(gapIdx)}>
-            ▲ Hide {gapSize} implementation lines
-          </div>
-        )
-        for (let i = start; i <= end; i++) {
+    let inBlockComment = false
+    let inSignature = false
+    let openParens = 0
+
+    lines.forEach((line, index) => {
+      const lineNum = index + 1
+      const trimmed = line.trim()
+      
+      if (trimmed.startsWith('/*') || trimmed.includes('/*')) {
+        inBlockComment = true
+      }
+      
+      const parenOpens = (line.match(/\(/g) || []).length
+      const parenCloses = (line.match(/\)/g) || []).length
+      openParens += (parenOpens - parenCloses)
+
+      if (inSignature) {
+        visibleLines.add(lineNum)
+        if (trimmed.includes('{')) {
+          inSignature = false
+        } else if (openParens <= 0 && !trimmed.endsWith(',') && !trimmed.endsWith('(')) {
+          inSignature = false
+        }
+      } else {
+        if (
+          inBlockComment || 
+          trimmed.startsWith('//') || 
+          trimmed.startsWith('package ') || 
+          trimmed.startsWith('import ') ||
+          trimmed.startsWith('func ') || 
+          trimmed.startsWith('type ')
+        ) {
+          visibleLines.add(lineNum)
+          
+          if (trimmed.startsWith('func ') || trimmed.startsWith('type ') || trimmed.startsWith('import ')) {
+            if (!trimmed.includes('{') && (trimmed.endsWith(',') || trimmed.endsWith('(') || openParens > 0)) {
+              inSignature = true
+            }
+          }
+        }
+      }
+      
+      if (trimmed.includes('*/')) {
+        inBlockComment = false
+      }
+    })
+
+    const blocks: { type: 'visible' | 'hidden', start: number, end: number }[] = []
+    let currentType: 'visible' | 'hidden' | null = null
+    let currentStart = 1
+    
+    for (let i = 1; i <= lines.length; i++) {
+      const type = visibleLines.has(i) ? 'visible' : 'hidden'
+      if (currentType === null) {
+        currentType = type
+        currentStart = i
+      } else if (currentType !== type) {
+        blocks.push({ type: currentType, start: currentStart, end: i - 1 })
+        currentType = type
+        currentStart = i
+      }
+    }
+    if (currentType !== null) {
+      blocks.push({ type: currentType, start: currentStart, end: lines.length })
+    }
+
+    const highlights = selectedStep?.Slice?.Highlights || []
+    const lineToHighlight = new Map<number, typeof highlights[0]>()
+    highlights.forEach(h => {
+      lineToHighlight.set(h.Start, h)
+    })
+
+    blocks.forEach((block, idx) => {
+      if (block.type === 'visible') {
+        for (let i = block.start; i <= block.end; i++) {
           elements.push(
-            <div key={`line-${i}`} className="code-line line-hidden">
+            <div key={`line-${i}`} className="code-line line-important" style={{ position: 'relative' }}>
               <div className="line-number">{i}</div>
               <div className="line-content" dangerouslySetInnerHTML={{ __html: highlightedLines[i - 1] }} />
+              {lineToHighlight.has(i) && (
+                <div className="highlight-reason">
+                  {lineToHighlight.get(i)!.Reason}
+                </div>
+              )}
             </div>
           )
         }
       } else {
-        elements.push(
-          <div key={`gap-${gapIdx}`} className="expand-button" onClick={() => toggleGap(gapIdx)}>
-            ▼ Show {gapSize} hidden lines
-          </div>
-        )
+        const gapSize = block.end - block.start + 1
+        if (gapSize <= 3) {
+          for (let i = block.start; i <= block.end; i++) {
+            elements.push(
+              <div key={`line-${i}`} className="code-line line-hidden">
+                <div className="line-number">{i}</div>
+                <div className="line-content" dangerouslySetInnerHTML={{ __html: highlightedLines[i - 1] }} />
+              </div>
+            )
+          }
+        } else {
+          if (expandedGaps.has(idx)) {
+            elements.push(
+              <div key={`gap-header-${idx}`} className="expand-button" onClick={() => toggleGap(idx)}>
+                ▲ Hide {gapSize} lines
+              </div>
+            )
+            for (let i = block.start; i <= block.end; i++) {
+              elements.push(
+                <div key={`line-${i}`} className="code-line line-hidden">
+                  <div className="line-number">{i}</div>
+                  <div className="line-content" dangerouslySetInnerHTML={{ __html: highlightedLines[i - 1] }} />
+                </div>
+              )
+            }
+          } else {
+            elements.push(
+              <div key={`gap-${idx}`} className="expand-button" onClick={() => toggleGap(idx)}>
+                ▼ Show {gapSize} hidden lines
+              </div>
+            )
+          }
+        }
       }
-    }
-
-    sortedRanges.forEach((range, idx) => {
-      if (currentLine < range.Start) {
-        addGap(currentLine, range.Start - 1, idx * 2)
-        currentLine = range.Start
-      }
-      for (let i = range.Start; i <= range.End && i <= lines.length; i++) {
-        elements.push(
-          <div key={`line-${i}`} className="code-line line-important">
-            <div className="line-number">{i}</div>
-            <div className="line-content" dangerouslySetInnerHTML={{ __html: highlightedLines[i - 1] }} />
-          </div>
-        )
-      }
-      currentLine = range.End + 1
     })
 
-    if (currentLine <= lines.length) {
-      addGap(currentLine, lines.length, -1)
-    }
     return elements
   }
 
   if (!analysis && !loading && !isPickingFolder) {
     return (
       <div className="welcome-screen">
-        <div className="welcome-card">
-          <h1>Map any repository.</h1>
-          <p>Codemap analyzes your codebase to identify core abstractions and optimal reading order, helping you understand complex systems in minutes.</p>
-          <button className="primary-button" onClick={() => setIsPickingFolder(true)}>
-            Select a Repository to Start
-          </button>
-          {error && <p className="error" style={{marginTop: '24px', color: '#cf222e', fontWeight: 500}}>{error}</p>}
+        <div className="welcome-content">
+          <div className="welcome-text-section">
+            <div className="badge">Codemap 1.0</div>
+            <h1>Map any repository.</h1>
+            <p>Codemap analyzes your codebase to identify core abstractions and optimal reading order, helping you understand complex systems in minutes.</p>
+            <button className="primary-button large-button" onClick={() => setIsPickingFolder(true)}>
+              Select a Repository to Start
+            </button>
+            {error && <p className="error" style={{marginTop: '24px', color: '#ff3b30', fontWeight: 500}}>{error}</p>}
+          </div>
+          
+          <div className="welcome-features-grid">
+            <div className="feature-card">
+              <div className="feature-icon">🔍</div>
+              <h3>Identify Abstractions</h3>
+              <p>Instantly find the most important files and structures without reading everything.</p>
+            </div>
+            <div className="feature-card">
+              <div className="feature-icon">📈</div>
+              <h3>Reading Order</h3>
+              <p>Learn exactly which files to read first, and trace dependencies step-by-step.</p>
+            </div>
+            <div className="feature-card">
+              <div className="feature-icon">🤖</div>
+              <h3>AI Assistant Built-in</h3>
+              <p>Ask questions about any file, generate contexts with local LLMs.</p>
+            </div>
+            <div className="feature-card">
+              <div className="feature-icon">⚡</div>
+              <h3>Blazing Fast</h3>
+              <p>Analyzes massive codebases in seconds using an optimized Go parser.</p>
+            </div>
+          </div>
         </div>
       </div>
     )

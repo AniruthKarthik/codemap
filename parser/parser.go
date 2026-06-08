@@ -77,6 +77,11 @@ func (p *GoParser) Parse(path string) (*models.File, error) {
 				// It's a function
 				symbol.Kind = models.FunctionSymbol
 			}
+			
+			if d.Body != nil {
+				symbol.Blocks = p.classifyBlocks(fset, d.Body)
+			}
+			
 			symbols = append(symbols, symbol)
 
 		case *ast.GenDecl:
@@ -241,4 +246,169 @@ func (p *GoParser) collectTypeRefs(expr ast.Expr, refType models.ReferenceType, 
 			}
 		}
 	}
+}
+
+func (p *GoParser) classifyBlocks(fset *token.FileSet, body *ast.BlockStmt) []models.CodeBlock {
+	var blocks []models.CodeBlock
+	if body == nil {
+		return blocks
+	}
+
+	for _, stmt := range body.List {
+		start := fset.Position(stmt.Pos()).Line
+		end := fset.Position(stmt.End()).Line
+
+		category := models.CategoryExecutionFlow
+		visibility := models.VisibilityUseful
+		reason := "Execution Flow"
+
+		isNoise := false
+		isCritical := false
+
+		ast.Inspect(stmt, func(n ast.Node) bool {
+			if n == nil {
+				return false
+			}
+			switch x := n.(type) {
+			case *ast.CallExpr:
+				if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
+					if ident, ok := sel.X.(*ast.Ident); ok {
+						pkg := ident.Name
+						method := sel.Sel.Name
+						
+						if pkg == "logger" || pkg == "log" || pkg == "zap" || pkg == "logrus" || method == "Info" || method == "Debug" || method == "Error" || method == "Warn" || method == "Printf" || method == "Println" {
+							category = models.CategoryLogging
+							isNoise = true
+							reason = "Logging"
+						} else if pkg == "metrics" || pkg == "stats" || pkg == "prometheus" || method == "Record" || method == "Inc" || method == "Observe" {
+							category = models.CategoryMetrics
+							isNoise = true
+							reason = "Metrics"
+						} else if pkg == "span" || pkg == "trace" || pkg == "tracer" || method == "AddEvent" {
+							category = models.CategoryNoise
+							isNoise = true
+							reason = "Tracing"
+						} else if method == "Execute" || method == "Generate" || method == "Save" || method == "Run" || method == "Start" || method == "Stop" || method == "Update" {
+							category = models.CategoryIntegration
+							isCritical = true
+							reason = "Cross-System Call"
+						} else if strings.HasPrefix(method, "New") {
+							category = models.CategoryIntegration
+							isCritical = true
+							reason = "Dependency Wiring"
+						}
+					}
+				} else if ident, ok := x.Fun.(*ast.Ident); ok {
+					if strings.HasPrefix(ident.Name, "New") || ident.Name == "make" {
+						category = models.CategoryIntegration
+						isCritical = true
+						reason = "Dependency Wiring"
+					}
+				}
+			case *ast.ReturnStmt:
+				if len(x.Results) > 0 {
+					if call, ok := x.Results[0].(*ast.CallExpr); ok {
+						if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+							if sel.Sel.Name == "Errorf" {
+								category = models.CategoryErrorHandling
+								isNoise = true
+								reason = "Error Wrapping"
+							}
+						}
+					}
+				}
+			case *ast.IfStmt:
+				if p.isErrCheck(x) {
+					if p.isSimpleErrorReturn(x) {
+						category = models.CategoryErrorHandling
+						isNoise = true
+						reason = "Error Handling"
+					}
+				} else if p.isValidation(x) {
+					category = models.CategoryValidation
+					isNoise = true
+					reason = "Simple Validation"
+				}
+			}
+			return true
+		})
+
+		if isNoise {
+			visibility = models.VisibilityNoise
+		} else if isCritical {
+			visibility = models.VisibilityCritical
+		}
+
+		blocks = append(blocks, models.CodeBlock{
+			StartLine:  start,
+			EndLine:    end,
+			Category:   category,
+			Visibility: visibility,
+			Reason:     reason,
+		})
+	}
+	return blocks
+}
+
+func (p *GoParser) isErrCheck(ifStmt *ast.IfStmt) bool {
+	if bin, ok := ifStmt.Cond.(*ast.BinaryExpr); ok {
+		if bin.Op == token.NEQ {
+			if id, ok := bin.X.(*ast.Ident); ok && id.Name == "err" {
+				return true
+			}
+			if id, ok := bin.Y.(*ast.Ident); ok && id.Name == "nil" {
+				return true
+			}
+		}
+	}
+	if ifStmt.Init != nil {
+		if assign, ok := ifStmt.Init.(*ast.AssignStmt); ok {
+			for _, lhs := range assign.Lhs {
+				if id, ok := lhs.(*ast.Ident); ok && id.Name == "err" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (p *GoParser) isValidation(ifStmt *ast.IfStmt) bool {
+	if bin, ok := ifStmt.Cond.(*ast.BinaryExpr); ok {
+		if bin.Op == token.EQL {
+			if lit, ok := bin.Y.(*ast.BasicLit); ok && lit.Value == `""` {
+				return true
+			}
+			if id, ok := bin.Y.(*ast.Ident); ok && id.Name == "nil" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (p *GoParser) isSimpleErrorReturn(ifStmt *ast.IfStmt) bool {
+	if ifStmt.Body == nil {
+		return false
+	}
+	for _, stmt := range ifStmt.Body.List {
+		switch s := stmt.(type) {
+		case *ast.ReturnStmt:
+			return true
+		case *ast.ExprStmt:
+			if call, ok := s.X.(*ast.CallExpr); ok {
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+					if id, ok := sel.X.(*ast.Ident); ok {
+						if id.Name == "log" || id.Name == "logger" {
+							continue
+						}
+					}
+				}
+			}
+			return false
+		default:
+			return false
+		}
+	}
+	return true
 }

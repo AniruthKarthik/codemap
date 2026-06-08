@@ -1116,21 +1116,59 @@ func (g *Generator) extractSlice(repo *models.Repository, concept *models.Concep
 
 		// 2. Collect ranges and highlights
 		for _, sym := range syms {
-			fileSlice.Ranges = append(fileSlice.Ranges, models.LineRange{
-				Start: sym.StartLine,
-				End:   sym.EndLine,
-			})
-
 			// Highlight the declaration (first 5 lines or until end)
 			hEnd := sym.StartLine + 4
 			if hEnd > sym.EndLine {
 				hEnd = sym.EndLine
 			}
-			fileSlice.Highlights = append(fileSlice.Highlights, models.Highlight{
-				Start:  sym.StartLine,
-				End:    hEnd,
-				Reason: fmt.Sprintf("Definition of %s %s", sym.Kind, sym.Name),
-			})
+
+			if sym.Kind == models.StructSymbol || sym.Kind == models.InterfaceSymbol {
+				fileSlice.Ranges = append(fileSlice.Ranges, models.LineRange{
+					Start: sym.StartLine,
+					End:   sym.EndLine,
+				})
+				fileSlice.Highlights = append(fileSlice.Highlights, models.Highlight{
+					Start:  sym.StartLine,
+					End:    hEnd,
+					Reason: fmt.Sprintf("Definition of %s %s", sym.Kind, sym.Name),
+				})
+			} else {
+				// Show function signature
+				fileSlice.Ranges = append(fileSlice.Ranges, models.LineRange{
+					Start: sym.StartLine,
+					End:   hEnd,
+				})
+				fileSlice.Highlights = append(fileSlice.Highlights, models.Highlight{
+					Start:  sym.StartLine,
+					End:    sym.StartLine,
+					Reason: "Public API / Entrypoint",
+				})
+
+				// Apply Line Classifier Blocks
+				f := idToFile[sym.ID]
+				for _, block := range sym.Blocks {
+					if block.Visibility == models.VisibilityCritical || (block.Visibility == models.VisibilityUseful && (sym.Score > 500 || f.Role == models.RoleEntrypoint)) {
+						fileSlice.Ranges = append(fileSlice.Ranges, models.LineRange{
+							Start: block.StartLine,
+							End:   block.EndLine,
+						})
+						
+						if block.Visibility == models.VisibilityCritical {
+							fileSlice.Highlights = append(fileSlice.Highlights, models.Highlight{
+								Start:  block.StartLine,
+								End:    block.EndLine,
+								Reason: block.Reason,
+							})
+						}
+					}
+				}
+
+				// Always ensure the final closing brace is included
+				fileSlice.Ranges = append(fileSlice.Ranges, models.LineRange{
+					Start: sym.EndLine,
+					End:   sym.EndLine,
+				})
+			}
 		}
 
 		// 3. Sort and Merge ranges

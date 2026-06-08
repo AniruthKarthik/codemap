@@ -3,9 +3,16 @@ export interface LineRange {
   End: number;
 }
 
+export interface Highlight {
+  Start: number;
+  End: number;
+  Reason: string;
+}
+
 export interface FileSlice {
   FilePath: string;
   Ranges: LineRange[];
+  Highlights: Highlight[];
 }
 
 export interface LearningStep {
