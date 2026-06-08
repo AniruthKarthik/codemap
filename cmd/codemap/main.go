@@ -246,6 +246,27 @@ func runServe() {
                 w.Write(content)
         }))
 
+        // API: Get Available AI Providers
+        http.HandleFunc("/api/ai/providers", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+                providers := []string{"Ollama (Local)"} // Always available
+
+                if os.Getenv("GEMINI_API_KEY") != "" {
+                        providers = append(providers, "Gemini")
+                }
+                if os.Getenv("OPENAI_API_KEY") != "" {
+                        providers = append(providers, "OpenAI")
+                }
+                if os.Getenv("ANTHROPIC_API_KEY") != "" {
+                        providers = append(providers, "Anthropic")
+                }
+                if os.Getenv("GROQ_API_KEY") != "" {
+                        providers = append(providers, "Groq")
+                }
+
+                w.Header().Set("Content-Type", "application/json")
+                json.NewEncoder(w).Encode(providers)
+        }))
+
         // API: AI Generate Context
         http.HandleFunc("/api/ai/generate", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
                 if r.Method != "POST" {

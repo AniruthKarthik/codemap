@@ -13,8 +13,6 @@ interface BrowserEntry {
   path: string
 }
 
-const PROVIDERS = ['Gemini', 'OpenAI', 'Anthropic', 'Groq', 'Ollama (Local)']
-
 function App() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null)
   const [selectedStepIndex, setSelectedStepIndex] = useState(0)
@@ -35,7 +33,8 @@ function App() {
   const isDraggingRight = useRef(false)
 
   // AI State
-  const [provider, setProvider] = useState<string>(() => localStorage.getItem('ai_provider') || 'Gemini')
+  const [provider, setProvider] = useState<string>(() => localStorage.getItem('ai_provider') || '')
+  const [availableProviders, setAvailableProviders] = useState<string[]>(['Ollama (Local)'])
   const [aiContexts, setAiContexts] = useState<Record<string, {purpose: string, objective: string}>>({})
   const [chatHistories, setChatHistories] = useState<Record<string, ChatMessage[]>>({})
   const [chatInput, setChatInput] = useState('')
@@ -45,10 +44,29 @@ function App() {
   const chatHistoryRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    localStorage.setItem('ai_provider', provider)
+    if (provider) {
+      localStorage.setItem('ai_provider', provider)
+    }
   }, [provider])
 
   useEffect(() => {
+    // Fetch available providers based on .env keys
+    fetch(`${API_BASE}/api/ai/providers`)
+      .then(res => res.json())
+      .then((data: string[]) => {
+        setAvailableProviders(data)
+        const saved = localStorage.getItem('ai_provider')
+        if (saved && data.includes(saved)) {
+          setProvider(saved)
+        } else if (data.length > 0) {
+          // If the saved provider isn't available (e.g. key removed), 
+          // default to the first available non-local model if possible
+          const bestDefault = data.find(p => p !== 'Ollama (Local)') || data[0]
+          setProvider(bestDefault)
+        }
+      })
+      .catch(err => console.error('Failed to get providers:', err))
+
     fetch(`${API_BASE}/api/home`)
       .then(res => res.text())
       .then(home => setBrowserPath(home))
@@ -378,7 +396,7 @@ function App() {
             value={provider} 
             onChange={e => setProvider(e.target.value)}
           >
-            {PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
+            {availableProviders.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
         </div>
         
@@ -416,7 +434,7 @@ function App() {
                 onClick={handleGenerateContext}
                 disabled={generatingContext}
               >
-                {generatingContext ? 'Analyzing File...' : '✨ Generate AI Context'}
+                {generatingContext ? 'Analyzing File...' : 'Generate AI Context'}
               </button>
             )}
           </div>
