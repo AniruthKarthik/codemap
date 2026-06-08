@@ -267,6 +267,24 @@ func runServe() {
                 json.NewEncoder(w).Encode(providers)
         }))
 
+        // API: Get Available AI Models for a Provider
+        http.HandleFunc("/api/ai/models", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+                provider := r.URL.Query().Get("provider")
+                if provider == "" {
+                        http.Error(w, "provider is required", http.StatusBadRequest)
+                        return
+                }
+
+                models, err := ai.ListModels(provider)
+                if err != nil {
+                        http.Error(w, err.Error(), http.StatusInternalServerError)
+                        return
+                }
+
+                w.Header().Set("Content-Type", "application/json")
+                json.NewEncoder(w).Encode(models)
+        }))
+
         // API: AI Generate Context
         http.HandleFunc("/api/ai/generate", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
                 if r.Method != "POST" {

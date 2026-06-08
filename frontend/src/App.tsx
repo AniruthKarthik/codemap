@@ -44,6 +44,7 @@ function App() {
   const [provider, setProvider] = useState<string>(() => localStorage.getItem('ai_provider') || '')
   const [model, setModel] = useState<string>(() => localStorage.getItem('ai_model') || '')
   const [availableProviders, setAvailableProviders] = useState<string[]>(['Ollama (Local)'])
+  const [availableModels, setAvailableModels] = useState<string[]>([])
   const [aiContexts, setAiContexts] = useState<Record<string, {purpose: string, objective: string}>>({})
   const [chatHistories, setChatHistories] = useState<Record<string, ChatMessage[]>>({})
   const [chatInput, setChatInput] = useState('')
@@ -64,10 +65,38 @@ function App() {
     }
   }, [model])
 
-  const handleProviderChange = (newProvider: string) => {
-    setProvider(newProvider)
-    setModel(DEFAULT_MODELS[newProvider] || '')
-  }
+  useEffect(() => {
+    if (!provider) {
+      setAvailableModels([])
+      return
+    }
+    
+    setAvailableModels(['Loading models...'])
+    
+    fetch(`${API_BASE}/api/ai/models?provider=${encodeURIComponent(provider)}`)
+      .then(res => res.json())
+      .then((data: string[]) => {
+        if (!data || data.length === 0) {
+          setAvailableModels([])
+          return
+        }
+        
+        setAvailableModels(data)
+        const savedModel = localStorage.getItem('ai_model')
+        
+        if (savedModel && data.includes(savedModel)) {
+          setModel(savedModel)
+        } else if (DEFAULT_MODELS[provider] && data.includes(DEFAULT_MODELS[provider])) {
+          setModel(DEFAULT_MODELS[provider])
+        } else {
+          setModel(data[0])
+        }
+      })
+      .catch(err => {
+        console.error('Failed to get models:', err)
+        setAvailableModels([])
+      })
+  }, [provider])
 
   useEffect(() => {
     // Fetch available providers based on .env keys
@@ -76,19 +105,12 @@ function App() {
       .then((data: string[]) => {
         setAvailableProviders(data)
         const savedProvider = localStorage.getItem('ai_provider')
-        const savedModel = localStorage.getItem('ai_model')
         
         if (savedProvider && data.includes(savedProvider)) {
           setProvider(savedProvider)
-          if (savedModel) {
-            setModel(savedModel)
-          } else {
-            setModel(DEFAULT_MODELS[savedProvider] || '')
-          }
         } else if (data.length > 0) {
           const bestDefault = data.find(p => p !== 'Ollama (Local)') || data[0]
           setProvider(bestDefault)
-          setModel(DEFAULT_MODELS[bestDefault] || '')
         }
       })
       .catch(err => console.error('Failed to get providers:', err))
@@ -423,18 +445,18 @@ function App() {
             <select 
               className="model-select" 
               value={provider} 
-              onChange={e => handleProviderChange(e.target.value)}
+              onChange={e => setProvider(e.target.value)}
             >
               {availableProviders.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
-            <input 
-              type="text" 
+            <select 
               className="model-select" 
               value={model} 
               onChange={e => setModel(e.target.value)}
-              placeholder="Model name"
               style={{width: '180px'}}
-            />
+            >
+              {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
           </div>
         </div>
         

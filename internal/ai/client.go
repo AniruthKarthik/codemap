@@ -38,6 +38,127 @@ Content:
 `
 )
 
+func ListModels(provider string) ([]string, error) {
+	switch provider {
+	case "OpenAI":
+		return listOpenAIModels("https://api.openai.com/v1/models", os.Getenv("OPENAI_API_KEY"))
+	case "Groq":
+		return listOpenAIModels("https://api.groq.com/openai/v1/models", os.Getenv("GROQ_API_KEY"))
+	case "Ollama (Local)":
+		return listOllamaModels()
+	case "Gemini":
+		return listGeminiModels()
+	case "Anthropic":
+		return []string{
+			"claude-3-7-sonnet-20250219",
+			"claude-3-5-sonnet-20241022",
+			"claude-3-5-haiku-20241022",
+			"claude-3-opus-20240229",
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported provider: %s", provider)
+	}
+}
+
+func listOpenAIModels(url, apiKey string) ([]string, error) {
+	req, _ := http.NewRequest("GET", url, nil)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("API error (%d)", resp.StatusCode)
+	}
+
+	var res struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+
+	var models []string
+	for _, m := range res.Data {
+		models = append(models, m.ID)
+	}
+	return models, nil
+}
+
+func listOllamaModels() ([]string, error) {
+	resp, err := http.Get("http://localhost:11434/api/tags")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Ollama API error (%d)", resp.StatusCode)
+	}
+
+	var res struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+
+	var models []string
+	for _, m := range res.Models {
+		models = append(models, m.Name)
+	}
+	return models, nil
+}
+
+func listGeminiModels() ([]string, error) {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		return nil, errors.New("GEMINI_API_KEY not found in .env")
+	}
+	resp, err := http.Get("https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Gemini API error (%d)", resp.StatusCode)
+	}
+
+	var res struct {
+		Models []struct {
+			Name                       string   `json:"name"`
+			SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+
+	var models []string
+	for _, m := range res.Models {
+		isValid := false
+		for _, method := range m.SupportedGenerationMethods {
+			if method == "generateContent" {
+				isValid = true
+				break
+			}
+		}
+		if isValid {
+			models = append(models, strings.TrimPrefix(m.Name, "models/"))
+		}
+	}
+	return models, nil
+}
+
 func GenerateContext(provider, model, content, path string) (*GenerateResponse, error) {
 	prompt := fmt.Sprintf(PromptGenerate, path, content)
 	
