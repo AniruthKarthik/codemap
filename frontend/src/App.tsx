@@ -102,10 +102,25 @@ function App() {
     const addGap = (start: number, end: number, idx: number) => {
       const gapSize = end - start + 1
       const gapIdx = idx
-      
+
+      // If the gap is just 1 line, just show it subtly instead of a button
+      if (gapSize === 1) {
+        elements.push(
+          <div key={`line-${start}`} className="code-line line-hidden">
+            <div className="line-number">{start}</div>
+            <div className="line-content" dangerouslySetInnerHTML={{ __html: highlightedLines[start - 1] }} />
+          </div>
+        )
+        return
+      }
+
       if (expandedGaps.has(gapIdx)) {
         elements.push(
-          <div key={`gap-header-${gapIdx}`} className="expand-button" onClick={() => toggleGap(gapIdx)}>
+          <div 
+            key={`gap-header-${gapIdx}`} 
+            className="expand-button" 
+            onClick={() => toggleGap(gapIdx)}
+          >
             ▲ Hide {gapSize} implementation lines
           </div>
         )
@@ -119,7 +134,11 @@ function App() {
         }
       } else {
         elements.push(
-          <div key={`gap-${gapIdx}`} className="expand-button" onClick={() => toggleGap(gapIdx)}>
+          <div 
+            key={`gap-${gapIdx}`} 
+            className="expand-button" 
+            onClick={() => toggleGap(gapIdx)}
+          >
             ▼ Show {gapSize} hidden lines
           </div>
         )
