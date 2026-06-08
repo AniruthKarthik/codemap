@@ -104,9 +104,51 @@ func (b *RepositoryBuilder) Build(ctx context.Context, root string) (*models.Rep
 		return nil, err
 	}
 
+	classifier := &Classifier{}
+	for _, f := range files {
+		f.Role = classifier.Classify(f)
+	}
+
 	return &models.Repository{
 		Files: files,
 	}, nil
+}
+
+// Classifier determines the role of a file in the project structure.
+type Classifier struct{}
+
+// Classify assigns a FileRole to a file based on its path and contents.
+func (c *Classifier) Classify(f *models.File) models.FileRole {
+	path := strings.ToLower(f.Path)
+
+	if strings.HasSuffix(path, "_test.go") {
+		return models.RoleTest
+	}
+
+	// Check for common directories
+	dirParts := strings.Split(path, string(filepath.Separator))
+	for _, part := range dirParts {
+		switch part {
+		case "examples", "example":
+			return models.RoleExample
+		case "testdata", "fixtures", "mock", "mocks":
+			return models.RoleTest
+		case "vendor":
+			return models.RoleInfrastructure
+		case "generated", "gen":
+			return models.RoleGenerated
+		}
+	}
+
+	// Entrypoint detection
+	for _, fn := range f.Functions {
+		if fn.Name == "main" && f.Package == "package main" {
+			return models.RoleEntrypoint
+		}
+	}
+
+	// Default to core logic for now
+	return models.RoleCoreLogic
 }
 
 // BuildRepository is a convenience function that uses the default RepositoryBuilder.
@@ -296,11 +338,93 @@ func (r *Ranker) Rank(repo *models.Repository) {
 		pkgPath := fileToPkgPath[f.Path]
 		score += int64(packageImportCount[pkgPath]) * 15
 
+		// Apply role-based penalties
+		switch f.Role {
+		case models.RoleTest:
+			score = int64(float64(score) * 0.1) // -90% penalty
+		case models.RoleExample, models.RoleGenerated:
+			score = int64(float64(score) * 0.3) // -70% penalty
+		case models.RoleInfrastructure:
+			score = int64(float64(score) * 0.5) // -50% penalty
+		}
+
 		f.Score = score
+
+		// 3. Score each function and store in File.Blocks
+		f.Blocks = make([]models.CodeBlock, 0, len(f.Functions))
+		for _, fn := range f.Functions {
+			var fnScore float64
+			switch fn.Name {
+			case "main":
+				if f.Package == "package main" {
+					fnScore = 100
+				}
+			case "NewRouter":
+				fnScore = 80
+			case "Login":
+				fnScore = 75
+			case "helper":
+				fnScore = 15
+			case "debug":
+				fnScore = 5
+			default:
+				// Default score for other functions could be based on exported status
+				if fn.Exported {
+					fnScore = 20
+				} else {
+					fnScore = 10
+				}
+			}
+
+			f.Blocks = append(f.Blocks, models.CodeBlock{
+				Name:      fn.Name,
+				StartLine: fn.StartLine,
+				EndLine:   fn.EndLine,
+				Score:     fnScore,
+			})
+		}
 	}
 
-	// 3. Sort files by score descending
+	// 4. Sort files by score descending
 	sort.Slice(repo.Files, func(i, j int) bool {
 		return repo.Files[i].Score > repo.Files[j].Score
 	})
+}
+
+// Generator creates a sequential learning path for exploring a repository.
+type Generator struct{}
+
+// Generate produces a list of LearningSteps based on file rankings and entrypoints.
+func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
+	steps := make([]models.LearningStep, 0, len(repo.Files))
+
+	for i, f := range repo.Files {
+		reason := "Key repository component"
+
+		// Determine reason based on file characteristics
+		isEntrypoint := false
+		for _, fn := range f.Functions {
+			if fn.Name == "main" && f.Package == "package main" {
+				isEntrypoint = true
+				break
+			}
+		}
+
+		if isEntrypoint {
+			reason = "Application entrypoint"
+		} else if f.Score > 50 {
+			reason = "Core business logic or utility"
+		} else {
+			reason = "Supporting implementation detail"
+		}
+
+		steps = append(steps, models.LearningStep{
+			Order:  i + 1,
+			File:   f.Path,
+			Reason: reason,
+			Score:  float64(f.Score),
+		})
+	}
+
+	return steps
 }

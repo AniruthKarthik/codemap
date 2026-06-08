@@ -230,3 +230,115 @@ func TestRanker(t *testing.T) {
 		t.Errorf("expected first file to be main.go, got %s", repo.Files[0].Path)
 	}
 }
+
+func TestFunctionRanking(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "fn_ranking_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	content := `package main
+func main() {}
+func NewRouter() {}
+func Login() {}
+func helper() {}
+func debug() {}
+func other() {}
+`
+	err = os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(content), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write file: %v", err)
+	}
+
+	// Also need a go.mod for getModuleName
+	err = os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	repo, err := BuildRepository(tmpDir)
+	if err != nil {
+		t.Fatalf("BuildRepository failed: %v", err)
+	}
+
+	ranker := &Ranker{}
+	ranker.Rank(repo)
+
+	if len(repo.Files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(repo.Files))
+	}
+
+	file := repo.Files[0]
+	expectedScores := map[string]float64{
+		"main":      100,
+		"NewRouter": 80,
+		"Login":     75,
+		"helper":    15,
+		"debug":     5,
+		"other":     10, // unexported default
+	}
+
+	if len(file.Blocks) != 6 {
+		t.Errorf("expected 6 blocks, got %d", len(file.Blocks))
+	}
+
+	for _, block := range file.Blocks {
+		expected, ok := expectedScores[block.Name]
+		if !ok {
+			t.Errorf("unexpected block: %s", block.Name)
+			continue
+		}
+		if block.Score != expected {
+			t.Errorf("expected score %v for %s, got %v", expected, block.Name, block.Score)
+		}
+	}
+}
+
+func TestGenerator(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "generator_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	files := map[string]string{
+		"go.mod":  "module test",
+		"main.go": "package main\n\nfunc main() {}",
+		"lib.go":  "package lib\n\nfunc Exported() {}",
+	}
+
+	for path, content := range files {
+		err = os.WriteFile(filepath.Join(tmpDir, path), []byte(content), 0644)
+		if err != nil {
+			t.Fatalf("Failed to write file: %v", err)
+		}
+	}
+
+	repo, err := BuildRepository(tmpDir)
+	if err != nil {
+		t.Fatalf("BuildRepository failed: %v", err)
+	}
+
+	ranker := &Ranker{}
+	ranker.Rank(repo)
+
+	generator := &Generator{}
+	steps := generator.Generate(repo)
+
+	if len(steps) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(steps))
+	}
+
+	if steps[0].Order != 1 {
+		t.Errorf("expected first step order 1, got %d", steps[0].Order)
+	}
+
+	if !strings.HasSuffix(steps[0].File, "main.go") {
+		t.Errorf("expected first file main.go (highest score), got %s", steps[0].File)
+	}
+
+	if steps[0].Reason != "Application entrypoint" {
+		t.Errorf("expected reason 'Application entrypoint', got %s", steps[0].Reason)
+	}
+}
