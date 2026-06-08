@@ -43,27 +43,26 @@ A large percentage of repository code is noise during onboarding (logging, metri
 
 ## Getting Started
 
-Codemap operates with a Go-based backend and a React frontend.
+Codemap operates with a Go-based backend and a React frontend. The project provides a `Makefile` to simplify installation, building, and running.
 
-1. Build the backend parser:
+1. **Install Dependencies** (Go modules and npm packages):
    ```bash
-   go build -o codemap ./cmd/codemap
+   make install-deps
    ```
 
-2. Install frontend dependencies:
+2. **Build the Project** (compiles the Go binary to `bin/codemap` and builds the frontend):
    ```bash
-   cd frontend
-   npm install
+   make build
    ```
 
-3. Run the development environment:
+3. **Start the Application** (runs both the backend API and frontend concurrently):
    ```bash
-   # Terminal 1: Run backend API
-   ./codemap serve
+   make start
+   ```
 
-   # Terminal 2: Run frontend
-   cd frontend
-   npm run dev
+4. **Clean Build Artifacts** (optional):
+   ```bash
+   make clean
    ```
 
 ## Explicit Non-Goals
