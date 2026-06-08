@@ -420,10 +420,15 @@ function App() {
   if (!analysis && !loading && !isPickingFolder) {
     return (
       <div className="welcome-screen">
+        <div className="welcome-screen-bg">
+           <div className="blob blob-1"></div>
+           <div className="blob blob-2"></div>
+           <div className="blob blob-3"></div>
+        </div>
         <div className="welcome-content">
           <div className="welcome-text-section">
             <div className="badge">Codemap 1.0</div>
-            <h1>Map any repository.</h1>
+            <h1 className="gradient-text">Map any repository.</h1>
             <p>Codemap analyzes your codebase to identify core abstractions and optimal reading order, helping you understand complex systems in minutes.</p>
             <button className="primary-button large-button" onClick={() => setIsPickingFolder(true)}>
               Select a Repository to Start
@@ -432,23 +437,31 @@ function App() {
           </div>
           
           <div className="welcome-features-grid">
-            <div className="feature-card">
-              <div className="feature-icon">🔍</div>
+            <div className="feature-card" style={{ animationDelay: '0.1s' }}>
+              <div className="feature-icon feature-icon-blue">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+              </div>
               <h3>Identify Abstractions</h3>
               <p>Instantly find the most important files and structures without reading everything.</p>
             </div>
-            <div className="feature-card">
-              <div className="feature-icon">📈</div>
+            <div className="feature-card" style={{ animationDelay: '0.2s' }}>
+              <div className="feature-icon feature-icon-purple">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" y1="9" x2="6" y2="21"></line></svg>
+              </div>
               <h3>Reading Order</h3>
               <p>Learn exactly which files to read first, and trace dependencies step-by-step.</p>
             </div>
-            <div className="feature-card">
-              <div className="feature-icon">🤖</div>
+            <div className="feature-card" style={{ animationDelay: '0.3s' }}>
+              <div className="feature-icon feature-icon-pink">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"></path><path d="M5 3v4"></path><path d="M19 17v4"></path><path d="M3 5h4"></path><path d="M17 19h4"></path></svg>
+              </div>
               <h3>AI Assistant Built-in</h3>
               <p>Ask questions about any file, generate contexts with local LLMs.</p>
             </div>
-            <div className="feature-card">
-              <div className="feature-icon">⚡</div>
+            <div className="feature-card" style={{ animationDelay: '0.4s' }}>
+              <div className="feature-icon feature-icon-orange">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+              </div>
               <h3>Blazing Fast</h3>
               <p>Analyzes massive codebases in seconds using an optimized Go parser.</p>
             </div>
