@@ -1178,21 +1178,6 @@ func (g *Generator) Generate(repo *models.Repository) []models.LearningStep {
 	for i, f := range repo.Files {
 		var purpose, learningObjective string
 
-		// Determine reason based on role and primary symbol
-		// For Core Domain, prefer Struct/Interface as primary symbol name
-		var primarySymbol *models.Symbol
-		maxSymScore := -1.0
-		for _, sym := range f.Symbols {
-			effectiveScore := sym.Score
-			if sym.Kind == models.StructSymbol || sym.Kind == models.InterfaceSymbol {
-				effectiveScore *= 1.5 // Bias towards types for reasoning
-			}
-			if effectiveScore > maxSymScore {
-				primarySymbol = &sym
-				maxSymScore = effectiveScore
-			}
-		}
-
 		// Extract important ranges for this file
 		fileSlice := models.FileSlice{
 		        FilePath: f.Path,
