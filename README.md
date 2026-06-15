@@ -1,6 +1,6 @@
 # Codemap
 
-Codemap is a repository onboarding and codebase learning system. It acts like an experienced engineer who has already studied the repository and is showing a new developer exactly where to look.
+Understand a codebase faster by reading the right files in the right order—and only the code that matters.
 
 ## Overview
 
