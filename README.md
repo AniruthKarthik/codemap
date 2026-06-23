@@ -1,6 +1,6 @@
 # Codemap
 
-Understand a codebase faster by reading the right files in the right order—and only the code that matters.
+Understand a codebase (only GOLANG is supported as of now) faster by reading the right files in the right order—and only the code that matters.
 
 ## Overview
 
